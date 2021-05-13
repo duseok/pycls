@@ -172,21 +172,21 @@ def test_quantized_model():
     test_meter = meters.TestMeter(len(test_loader))
     calibration_loader = data_loader.construct_calibration_loader()
 
-    if "min_max" in cfg.QUANTIZATION.MODE or "mm_shift" in cfg.QUANTIZATION.MODE:
+    if "min_max" in cfg.QUANTIZATION.METHOD or "mm_shift" in cfg.QUANTIZATION.METHOD:
         fused_model = fuse_network(model)
     quantized_model = None
 
-    if "min_max" in cfg.QUANTIZATION.MODE:
+    if "min_max" in cfg.QUANTIZATION.METHOD:
         quantized_model = quantize_model(fused_model, calibration_loader, False)
         print("Min-Max")
         test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
 
-    if "mm_shift" in cfg.QUANTIZATION.MODE:
+    if "mm_shift" in cfg.QUANTIZATION.METHOD:
         quantized_model = quantize_model(fused_model, calibration_loader, True)
         print(f"Shift Quantization")
         test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
 
-    if "float" in cfg.QUANTIZATION.MODE:
+    if "float" in cfg.QUANTIZATION.METHOD:
         print("Float32")
         cur_device = torch.cuda.current_device()
         model = model.cuda(device=cur_device)
