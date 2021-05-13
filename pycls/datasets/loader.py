@@ -7,6 +7,8 @@
 
 """Data loader."""
 
+from __future__ import annotations
+
 import os
 
 import torch
@@ -14,8 +16,7 @@ from pycls.core.config import cfg
 from pycls.datasets.cifar10 import Cifar10
 from pycls.datasets.imagenet import ImageNet
 from torch.utils.data.distributed import DistributedSampler
-from torch.utils.data.sampler import RandomSampler
-
+from torch.utils.data.sampler import RandomSampler, Sampler
 
 # Supported datasets
 _DATASETS = {"cifar10": Cifar10, "imagenet": ImageNet}
@@ -25,6 +26,51 @@ _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
 # Relative data paths to default data directory
 _PATHS = {"cifar10": "cifar10", "imagenet": "imagenet"}
+
+
+class SeqSampler(Sampler[int]):
+    def __init__(self, data_source, num_samples: int):
+        self.data_source = data_source
+        self.num_samples = num_samples
+
+    def __iter__(self):
+        return iter(range(len(self)))
+
+    def __len__(self) -> int:
+        return min(self.num_samples, len(self.data_source))
+
+
+def _construct_calibration_loader(dataset_name, split, batch_size, shuffle, drop_last):
+    """Constructs the data loader for calibration data."""
+    err_str = "Dataset '{}' not supported".format(dataset_name)
+    assert dataset_name in _DATASETS and dataset_name in _PATHS, err_str
+    # Retrieve the data path for the dataset
+    data_path = os.path.join(_DATA_DIR, _PATHS[dataset_name])
+    # Construct the dataset
+    dataset = _DATASETS[dataset_name](data_path, split)
+    sampler = SeqSampler(dataset, num_samples=1000)
+    # Create a loader
+    loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        sampler=sampler,
+        num_workers=cfg.DATA_LOADER.NUM_WORKERS,
+        pin_memory=cfg.DATA_LOADER.PIN_MEMORY,
+        drop_last=drop_last,
+    )
+    return loader
+
+
+def construct_calibration_loader():
+    """Calibration loader wrapper."""
+    return _construct_calibration_loader(
+        dataset_name=cfg.TRAIN.DATASET,
+        split=cfg.TEST.SPLIT,  # for deterministic results
+        batch_size=cfg.TEST.BATCH_SIZE,
+        shuffle=False,
+        drop_last=False,
+    )
 
 
 def _construct_loader(dataset_name, split, batch_size, shuffle, drop_last):

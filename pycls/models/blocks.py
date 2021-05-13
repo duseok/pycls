@@ -12,7 +12,8 @@ import torch
 import torch.nn as nn
 from pycls.core.config import cfg
 from torch.nn import Module
-
+from torch.nn.quantized.modules.functional_modules import FloatFunctional
+from torch.quantization import fuse_modules
 
 # ----------------------- Shortcuts for common torch.nn layers ----------------------- #
 
@@ -129,11 +130,12 @@ class SE(Module):
             conv2d(w_in, w_se, 1, bias=True),
             activation(),
             conv2d(w_se, w_in, 1, bias=True),
-            nn.Sigmoid(),
+            nn.Hardsigmoid() if cfg.QUANTIZATION.SIGMOID2HSIGMOID else nn.Sigmoid(),
         )
+        self.mul = FloatFunctional()
 
     def forward(self, x):
-        return x * self.f_ex(self.avg_pool(x))
+        return self.mul.mul(x, self.f_ex(self.avg_pool(x)))
 
     @staticmethod
     def complexity(cx, w_in, w_se):
@@ -143,6 +145,10 @@ class SE(Module):
         cx = conv2d_cx(cx, w_se, w_in, 1, bias=True)
         cx["h"], cx["w"] = h, w
         return cx
+
+    def fuse_model(self, include_relu=False):
+        if include_relu:
+            fuse_modules(self.f_ex, [["0", "1"]], inplace=True)
 
 
 # ---------------------------------- Miscellaneous ----------------------------------- #

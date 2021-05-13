@@ -23,6 +23,8 @@ from pycls.models.blocks import (
     norm2d_cx,
 )
 from torch.nn import Dropout, Module
+from torch.nn.quantized import FloatFunctional
+from torch.quantization import fuse_modules
 
 
 class EffHead(Module):
@@ -54,6 +56,12 @@ class EffHead(Module):
         cx = linear_cx(cx, w_out, num_classes, bias=True)
         return cx
 
+    def fuse_model(self, include_relu: bool):
+        targets = (
+            [["conv", "conv_bn", "conv_af"]] if include_relu else [["conv", "conv_bn"]]
+        )
+        fuse_modules(self, targets, inplace=True)
+
 
 class MBConv(Module):
     """Mobile inverted bottleneck block with SE."""
@@ -74,6 +82,7 @@ class MBConv(Module):
         self.lin_proj = conv2d(w_exp, w_out, 1)
         self.lin_proj_bn = norm2d(w_out)
         self.has_skip = stride == 1 and w_in == w_out
+        self.skip_add = FloatFunctional()
 
     def forward(self, x):
         f_x = self.exp_af(self.exp_bn(self.exp(x))) if self.exp else x
@@ -83,7 +92,7 @@ class MBConv(Module):
         if self.has_skip:
             if self.training and cfg.EN.DC_RATIO > 0.0:
                 f_x = drop_connect(f_x, cfg.EN.DC_RATIO)
-            f_x = x + f_x
+            f_x = self.skip_add.add(x, f_x)
         return f_x
 
     @staticmethod
@@ -98,6 +107,25 @@ class MBConv(Module):
         cx = conv2d_cx(cx, w_exp, w_out, 1)
         cx = norm2d_cx(cx, w_out)
         return cx
+
+    def fuse_model(self, include_relu: bool):
+        if self.exp:
+            targets = (
+                [
+                    ["exp", "exp_bn", "exp_af"],
+                    ["dwise", "dwise_bn", "dwise_af"],
+                    ["lin_proj", "lin_proj_bn"],
+                ]
+                if include_relu
+                else [
+                    ["exp", "exp_bn"],
+                    ["dwise", "dwise_bn"],
+                    ["lin_proj", "lin_proj_bn"],
+                ]
+            )
+            fuse_modules(self, targets, inplace=True)
+        if self.se:
+            self.se.fuse_model(include_relu)
 
 
 class EffStage(Module):
@@ -122,6 +150,11 @@ class EffStage(Module):
             stride, w_in = 1, w_out
         return cx
 
+    def fuse_model(self, include_relu: bool):
+        for m in self.modules():
+            if type(m) == MBConv:
+                m.fuse_model(include_relu)
+
 
 class StemIN(Module):
     """EfficientNet stem for ImageNet: 3x3, BN, AF."""
@@ -142,6 +175,10 @@ class StemIN(Module):
         cx = conv2d_cx(cx, w_in, w_out, 3, stride=2)
         cx = norm2d_cx(cx, w_out)
         return cx
+
+    def fuse_model(self, include_relu: bool):
+        targets = [["conv", "bn", "af"]] if include_relu else [["conv", "bn"]]
+        fuse_modules(self, targets, inplace=True)
 
 
 class EffNet(Module):
@@ -195,3 +232,10 @@ class EffNet(Module):
             prev_w = w
         cx = EffHead.complexity(cx, prev_w, hw, nc)
         return cx
+
+    def fuse_model(self, include_relu: bool = False):
+        self.stem.fuse_model(include_relu)
+        for m in self.modules():
+            if type(m) == EffStage:
+                m.fuse_model(include_relu)
+        self.head.fuse_model(include_relu)

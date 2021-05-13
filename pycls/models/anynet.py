@@ -24,6 +24,8 @@ from pycls.models.blocks import (
     pool2d_cx,
 )
 from torch.nn import Module
+from torch.nn.quantized import FloatFunctional
+from torch.quantization import fuse_modules
 
 
 def get_stem_fun(stem_type):
@@ -82,6 +84,11 @@ class AnyHead(Module):
         cx = linear_cx(cx, w_in, num_classes, bias=True)
         return cx
 
+    def fuse_model(self, include_relu: bool):
+        if self.head_width > 0:
+            targets = [["conv", "bn", "af"]] if include_relu else [["conv", "bn"]]
+            fuse_modules(self, targets, inplace=True)
+
 
 class VanillaBlock(Module):
     """Vanilla block: [3x3 conv, BN, Relu] x2."""
@@ -107,6 +114,14 @@ class VanillaBlock(Module):
         cx = conv2d_cx(cx, w_out, w_out, 3)
         cx = norm2d_cx(cx, w_out)
         return cx
+
+    def fuse_model(self, include_relu: bool):
+        targets = (
+            [["a", "a_bn", "a_af"], ["b", "b_bn", "b_af"]]
+            if include_relu
+            else [["a", "a_bn"], ["b", "b_bn"]]
+        )
+        fuse_modules(self, targets, inplace=True)
 
 
 class BasicTransform(Module):
@@ -134,6 +149,14 @@ class BasicTransform(Module):
         cx = norm2d_cx(cx, w_out)
         return cx
 
+    def fuse_model(self, include_relu: bool):
+        targets = (
+            [["a", "a_bn", "a_af"], ["b", "b_bn"]]
+            if include_relu
+            else [["a", "a_bn"], ["b", "b_bn"]]
+        )
+        fuse_modules(self, targets, inplace=True)
+
 
 class ResBasicBlock(Module):
     """Residual basic block: x + f(x), f = basic transform."""
@@ -160,6 +183,11 @@ class ResBasicBlock(Module):
             cx["h"], cx["w"] = h, w
         cx = BasicTransform.complexity(cx, w_in, w_out, stride, params)
         return cx
+
+    def fuse_model(self, include_relu: bool):
+        if self.proj:
+            fuse_modules(self, [["proj", "bn"]], inplace=True)
+        self.f.fuse_model(include_relu)
 
 
 class BottleneckTransform(Module):
@@ -200,6 +228,16 @@ class BottleneckTransform(Module):
         cx = norm2d_cx(cx, w_out)
         return cx
 
+    def fuse_model(self, include_relu: bool):
+        targets = (
+            [["a", "a_bn", "a_af"], ["b", "b_bn", "b_af"], ["c", "c_bn"]]
+            if include_relu
+            else [["a", "a_bn"], ["b", "b_bn"], ["c", "c_bn"]]
+        )
+        fuse_modules(self, targets, inplace=True)
+        if self.se is not None:
+            self.se.fuse_model(include_relu)
+
 
 class ResBottleneckBlock(Module):
     """Residual bottleneck block: x + f(x), f = bottleneck transform."""
@@ -212,10 +250,11 @@ class ResBottleneckBlock(Module):
             self.bn = norm2d(w_out)
         self.f = BottleneckTransform(w_in, w_out, stride, params)
         self.af = activation()
+        self.skip_add = FloatFunctional()
 
     def forward(self, x):
         x_p = self.bn(self.proj(x)) if self.proj else x
-        return self.af(x_p + self.f(x))
+        return self.af(self.skip_add.add(x_p, self.f(x)))
 
     @staticmethod
     def complexity(cx, w_in, w_out, stride, params):
@@ -227,6 +266,11 @@ class ResBottleneckBlock(Module):
         cx = BottleneckTransform.complexity(cx, w_in, w_out, stride, params)
         return cx
 
+    def fuse_model(self, include_relu: bool):
+        if self.proj:
+            fuse_modules(self, [["proj", "bn"]], inplace=True)
+        self.f.fuse_model(include_relu)
+
 
 class ResBottleneckLinearBlock(Module):
     """Residual linear bottleneck block: x + f(x), f = bottleneck transform."""
@@ -235,13 +279,17 @@ class ResBottleneckLinearBlock(Module):
         super(ResBottleneckLinearBlock, self).__init__()
         self.has_skip = (w_in == w_out) and (stride == 1)
         self.f = BottleneckTransform(w_in, w_out, stride, params)
+        self.skip_add = FloatFunctional()
 
     def forward(self, x):
-        return x + self.f(x) if self.has_skip else self.f(x)
+        return self.skip_add.add(x, self.f(x)) if self.has_skip else self.f(x)
 
     @staticmethod
     def complexity(cx, w_in, w_out, stride, params):
         return BottleneckTransform.complexity(cx, w_in, w_out, stride, params)
+
+    def fuse_model(self, include_relu: bool):
+        self.f.fuse_model(include_relu)
 
 
 class ResStemCifar(Module):
@@ -263,6 +311,10 @@ class ResStemCifar(Module):
         cx = conv2d_cx(cx, w_in, w_out, 3)
         cx = norm2d_cx(cx, w_out)
         return cx
+
+    def fuse_model(self, include_relu: bool):
+        targets = [["conv", "bn", "af"]] if include_relu else [["conv", "bn"]]
+        fuse_modules(self, targets, inplace=True)
 
 
 class ResStem(Module):
@@ -287,6 +339,10 @@ class ResStem(Module):
         cx = pool2d_cx(cx, w_out, 3, stride=2)
         return cx
 
+    def fuse_model(self, include_relu: bool):
+        targets = [["conv", "bn", "af"]] if include_relu else [["conv", "bn"]]
+        fuse_modules(self, targets, inplace=True)
+
 
 class SimpleStem(Module):
     """Simple stem for ImageNet: 3x3, BN, AF."""
@@ -307,6 +363,10 @@ class SimpleStem(Module):
         cx = conv2d_cx(cx, w_in, w_out, 3, stride=2)
         cx = norm2d_cx(cx, w_out)
         return cx
+
+    def fuse_model(self, include_relu: bool):
+        targets = [["conv", "bn", "af"]] if include_relu else [["conv", "bn"]]
+        fuse_modules(self, targets, inplace=True)
 
 
 class AnyStage(Module):
@@ -330,6 +390,16 @@ class AnyStage(Module):
             cx = block_fun.complexity(cx, w_in, w_out, stride, params)
             stride, w_in = 1, w_out
         return cx
+
+    def fuse_model(self, include_relu: bool):
+        for m in self.modules():
+            if type(m) in [
+                VanillaBlock,
+                ResBasicBlock,
+                ResBottleneckBlock,
+                ResBottleneckLinearBlock,
+            ]:
+                m.fuse_model(include_relu)
 
 
 class AnyNet(Module):
@@ -388,3 +458,10 @@ class AnyNet(Module):
             prev_w = w
         cx = AnyHead.complexity(cx, prev_w, p["head_w"], p["num_classes"])
         return cx
+
+    def fuse_model(self, include_relu: bool = False):
+        self.stem.fuse_model(include_relu)
+        for m in self.modules():
+            if type(m) == AnyStage:
+                m.fuse_model(include_relu)
+        self.head.fuse_model(include_relu)

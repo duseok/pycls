@@ -45,6 +45,17 @@ _C.MODEL.ACTIVATION_INPLACE = True
 _C.MODEL.SCALING_TYPE = ""
 _C.MODEL.SCALING_FACTOR = 1.0
 
+# ---------------------------------- Quantization options ----------------------------------- #
+_C.QUANTIZATION = CfgNode()
+
+# Quantization methods to check accuracy
+_C.QUANTIZATION.METHOD = ("min_max", "mm_shift", "float")
+
+# ReLU Fusion
+_C.QUANTIZATION.ACT_FUSION = False
+
+# Change Sigmoid to Hardsigmoid
+_C.QUANTIZATION.SIGMOID2HSIGMOID = False
 
 # ---------------------------------- ResNet options ---------------------------------- #
 _C.RESNET = CfgNode()
