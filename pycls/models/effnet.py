@@ -82,7 +82,8 @@ class MBConv(Module):
         self.lin_proj = conv2d(w_exp, w_out, 1)
         self.lin_proj_bn = norm2d(w_out)
         self.has_skip = stride == 1 and w_in == w_out
-        self.skip_add = FloatFunctional()
+        if self.has_skip:
+            self.skip_add = FloatFunctional()
 
     def forward(self, x):
         f_x = self.exp_af(self.exp_bn(self.exp(x))) if self.exp else x

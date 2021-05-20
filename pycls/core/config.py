@@ -49,7 +49,7 @@ _C.MODEL.SCALING_FACTOR = 1.0
 _C.QUANTIZATION = CfgNode()
 
 # Quantization methods to check accuracy
-_C.QUANTIZATION.METHOD = ("min_max", "mm_shift", "float")
+_C.QUANTIZATION.METHOD = ("min_max", "mm_shift", "histogram", "hist_shift", "float")
 
 # ReLU Fusion
 _C.QUANTIZATION.ACT_FUSION = False

@@ -17,7 +17,11 @@ import pycls.datasets.loader as data_loader
 import torch
 from pycls.core.config import cfg
 from pycls.core.io import pathmgr
-from pycls.models.model_quantizer import MinMaxShiftObserver, QuantizedModel
+from pycls.models.model_quantizer import (
+    HistogramShiftObserver,
+    MinMaxShiftObserver,
+    QuantizedModel,
+)
 from torch.quantization.observer import HistogramObserver, MinMaxObserver
 
 if TYPE_CHECKING:
@@ -131,10 +135,25 @@ def calibrate_model(
         _ = model(inputs)
 
 
-def quantize_model(model: Module, loader: DataLoader, shift_quantization: bool):
+def get_observer(method: str):
+    observer = None
+    if "min_max" == method:
+        observer = MinMaxObserver
+    elif "mm_shift" == method:
+        observer = MinMaxShiftObserver
+    elif "histogram" == method:
+        observer = HistogramObserver
+    elif "hist_shift" == method:
+        observer = HistogramShiftObserver
+    else:
+        raise AttributeError("Not supported")
+    return observer
+
+
+def quantize_model(model: Module, loader: DataLoader, method: str):
     quantized_model = QuantizedModel(model_fp32=model)
 
-    observer = MinMaxShiftObserver if shift_quantization else MinMaxObserver
+    observer = get_observer(method)
     quantization_config = torch.quantization.QConfig(
         activation=observer.with_args(
             dtype=torch.quint8, qscheme=torch.per_tensor_symmetric
@@ -172,22 +191,32 @@ def test_quantized_model():
     test_meter = meters.TestMeter(len(test_loader))
     calibration_loader = data_loader.construct_calibration_loader()
 
-    if "min_max" in cfg.QUANTIZATION.METHOD or "mm_shift" in cfg.QUANTIZATION.METHOD:
+    if ("float") != cfg.QUANTIZATION.METHOD:
         fused_model = fuse_network(model)
     quantized_model = None
 
     if "min_max" in cfg.QUANTIZATION.METHOD:
-        quantized_model = quantize_model(fused_model, calibration_loader, False)
-        print("Min-Max")
+        quantized_model = quantize_model(fused_model, calibration_loader, "min_max")
+        logger.info("Min-Max")
         test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
 
     if "mm_shift" in cfg.QUANTIZATION.METHOD:
-        quantized_model = quantize_model(fused_model, calibration_loader, True)
-        print(f"Shift Quantization")
+        quantized_model = quantize_model(fused_model, calibration_loader, "mm_shift")
+        logger.info(f"Min-Max Shift Quantization")
+        test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
+
+    if "histogram" in cfg.QUANTIZATION.METHOD:
+        quantized_model = quantize_model(fused_model, calibration_loader, "histogram")
+        logger.info(f"Histogram Quantization")
+        test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
+
+    if "hist_shift" in cfg.QUANTIZATION.METHOD:
+        quantized_model = quantize_model(fused_model, calibration_loader, "hist_shift")
+        logger.info(f"Histogram Shift Quantization")
         test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
 
     if "float" in cfg.QUANTIZATION.METHOD:
-        print("Float32")
+        logger.info("Float32")
         cur_device = torch.cuda.current_device()
         model = model.cuda(device=cur_device)
         trainer.test_epoch(test_loader, model, test_meter, 0)

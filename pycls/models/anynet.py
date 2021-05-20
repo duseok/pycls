@@ -279,7 +279,8 @@ class ResBottleneckLinearBlock(Module):
         super(ResBottleneckLinearBlock, self).__init__()
         self.has_skip = (w_in == w_out) and (stride == 1)
         self.f = BottleneckTransform(w_in, w_out, stride, params)
-        self.skip_add = FloatFunctional()
+        if self.has_skip:
+            self.skip_add = FloatFunctional()
 
     def forward(self, x):
         return self.skip_add.add(x, self.f(x)) if self.has_skip else self.f(x)
