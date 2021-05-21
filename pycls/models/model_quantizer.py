@@ -3,7 +3,6 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
-import numpy as np
 import torch
 import torch.nn as nn
 from torch.quantization.observer import HistogramObserver, MinMaxObserver
@@ -166,7 +165,7 @@ class HistogramShiftObserver(HistogramObserver):
 def get_symmetric_shift_val(min_val_cur: int, max_val_cur: int, close_val: bool = True):
     max_abs = max(abs(min_val_cur), abs(max_val_cur))
     if max_abs != 0:
-        value = int(np.floor(np.log2(max_abs / 255)))
+        value = int(torch.floor(torch.log2(max_abs / 255)))
         delta = abs(max_abs - 255 * (2 ** value))
         while 255 * (2 ** value) < max_abs:
             value += 1

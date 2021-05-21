@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
-import numpy as np
+import pycls.core.benchmark as benchmark
 import pycls.core.builders as builders
 import pycls.core.checkpoint as cp
 import pycls.core.config as config
@@ -49,21 +49,16 @@ def setup_cpu_env():
 def model_equivalence(
     model_1: Module,
     model_2: Module,
-    device=torch.device("cpu:0"),
     rtol=1e-05,
     atol=1e-08,
     num_tests=100,
     input_size=(1, 3, 32, 32),
 ):
-
-    model_1.to(device)
-    model_2.to(device)
-
     for _ in range(num_tests):
-        x = torch.rand(size=input_size).to(device)
-        y1 = model_1(x).detach().cpu().numpy()
-        y2 = model_2(x).detach().cpu().numpy()
-        if not np.allclose(a=y1, b=y2, rtol=rtol, atol=atol, equal_nan=False):
+        x = torch.rand(size=input_size)
+        y1 = model_1(x)
+        y2 = model_2(x)
+        if not torch.allclose(y1, y2, rtol=rtol, atol=atol, equal_nan=False):
             print("Model equivalence test sample failed: ")
             print(y1)
             print(y2)
@@ -81,7 +76,6 @@ def fuse_network(model: Module):
     assert model_equivalence(
         model_1=model,
         model_2=fused_model,
-        device=torch.device("cpu:0"),
         rtol=1e-02,
         atol=1e-04,
         num_tests=100,
