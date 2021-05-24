@@ -28,3 +28,9 @@ pycls/datasets/data/
 # Other
 logs/
 scratch*
+
+# VSCode
+.vscode
+
+# Neptune
+.neptune
