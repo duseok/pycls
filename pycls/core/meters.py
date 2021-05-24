@@ -10,11 +10,12 @@
 from collections import deque
 
 import numpy as np
+import pycls.core.distributed as dist
 import pycls.core.logging as logging
 import torch
 from pycls.core.config import cfg
+from pycls.core.neptune import NeptuneLogger
 from pycls.core.timer import Timer
-
 
 logger = logging.get_logger(__name__)
 
@@ -150,6 +151,11 @@ class TrainMeter(object):
     def log_iter_stats(self, cur_epoch, cur_iter):
         if (cur_iter + 1) % cfg.LOG_PERIOD == 0:
             stats = self.get_iter_stats(cur_epoch, cur_iter)
+            if dist.is_master_proc() and cfg.USE_NEPTUNE:
+                nt_logger = NeptuneLogger()
+                nt_logger.log(f"TRAIN/Loss", stats["loss"])
+                nt_logger.log(f"TRAIN/LR", stats["lr"])
+                nt_logger.log(f"TRAIN/Top1.Err", stats["top1_err"])
             logger.info(logging.dump_log_data(stats, self.phase + "_iter"))
 
     def get_epoch_stats(self, cur_epoch):
@@ -257,4 +263,7 @@ class TestMeter(object):
 
     def log_epoch_stats(self, cur_epoch):
         stats = self.get_epoch_stats(cur_epoch)
+        if dist.is_master_proc() and cfg.USE_NEPTUNE:
+            nt_logger = NeptuneLogger()
+            nt_logger.log(f"TEST/{self.phase}/Top1.Err", stats["top1_err"])
         logger.info(logging.dump_log_data(stats, self.phase + "_epoch"))

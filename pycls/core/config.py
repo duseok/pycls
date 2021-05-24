@@ -354,6 +354,11 @@ _C.LOG_DEST = "stdout"
 # Log period in iters
 _C.LOG_PERIOD = 10
 
+# Neptune AI
+_C.USE_NEPTUNE = False
+_C.NEPTUNE_CONFIG = "neptune.yaml"
+_C.NEPTUNE_TAGS = []
+
 # Distributed backend
 _C.DIST_BACKEND = "nccl"
 
