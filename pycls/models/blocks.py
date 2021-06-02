@@ -51,6 +51,8 @@ def activation():
     activation_fun = cfg.MODEL.ACTIVATION_FUN.lower()
     if activation_fun == "relu":
         return nn.ReLU(inplace=cfg.MODEL.ACTIVATION_INPLACE)
+    elif activation_fun == "relu6":
+        return nn.ReLU6(inplace=cfg.MODEL.ACTIVATION_INPLACE)
     elif activation_fun == "silu" or activation_fun == "swish":
         try:
             return torch.nn.SiLU()
