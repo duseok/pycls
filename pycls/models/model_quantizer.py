@@ -56,6 +56,50 @@ class MinMaxShiftObserver(MinMaxObserver):
         return x_orig
 
 
+class MovingAvgMinMaxShiftObserver(MinMaxObserver):
+    def __init__(
+        self,
+        averaging_constant=0.01,
+        dtype=torch.quint8,
+        qscheme=torch.per_tensor_affine,
+        reduce_range=False,
+        quant_min=None,
+        quant_max=None,
+    ):
+        if qscheme != torch.per_tensor_symmetric:
+            raise NotImplemented("Currently only support for 'per_tensor_symetric'")
+        super(MovingAvgMinMaxShiftObserver, self).__init__(
+            dtype, qscheme, reduce_range, quant_min, quant_max
+        )
+        self.averaging_constant = averaging_constant
+        self._min_val_raw = torch.Tensor(0)
+        self._max_val_raw = torch.Tensor(0)
+
+    def forward(self, x_orig):
+        if x_orig.numel() == 0:
+            return x_orig
+        x = x_orig.detach()  # avoid keeping autograd tape
+        x = x.to(self.min_val.dtype)
+        min_val_cur, max_val_cur = torch._aminmax(x)
+        if self._min_val_raw.numel() == 0 or self._max_val_raw.numel() == 0:
+            self._min_val_raw = min_val_cur
+            self._max_val_raw = max_val_cur
+        else:
+            self._min_val_raw = self._min_val_raw + self.averaging_constant * (
+                min_val_cur - self._min_val_raw
+            )
+            self._max_val_raw = self._max_val_raw + self.averaging_constant * (
+                max_val_cur - self._max_val_raw
+            )
+        val = get_symmetric_shift_val(self._min_val_raw, self._max_val_raw)
+        min_val = torch.min(torch.tensor(-val), self.min_val)
+        max_val = torch.max(torch.tensor(val), self.max_val)
+
+        self.min_val.copy_(min_val)
+        self.max_val.copy_(max_val)
+        return x_orig
+
+
 class HistogramShiftObserver(HistogramObserver):
     def __init__(
         self,
@@ -70,6 +114,22 @@ class HistogramShiftObserver(HistogramObserver):
         super(HistogramShiftObserver, self).__init__(
             bins, upsample_rate, dtype, qscheme, reduce_range
         )
+
+    def _get_norm(
+        self, delta_begin: torch.Tensor, delta_end: torch.Tensor, density: torch.Tensor
+    ) -> torch.Tensor:
+        r"""
+        Compute the norm of the values uniformaly distributed between
+        delta_begin and delta_end.
+        Currently only L2 norm is supported.
+
+        norm = density * (integral_{begin, end} x^2)
+             = density * (end^3 - begin^3) / 3
+        """
+        norm = (
+            delta_end * delta_end * delta_end - delta_begin * delta_begin * delta_begin
+        ) / 3
+        return density.to("cpu:0") * norm
 
     def forward(self, x_orig: torch.Tensor) -> torch.Tensor:
         if x_orig.numel() == 0:

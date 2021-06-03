@@ -48,14 +48,27 @@ _C.MODEL.SCALING_FACTOR = 1.0
 # ---------------------------------- Quantization options ----------------------------------- #
 _C.QUANTIZATION = CfgNode()
 
-# Quantization methods to check accuracy
-_C.QUANTIZATION.METHOD = ("min_max", "mm_shift", "histogram", "hist_shift", "float")
-
 # ReLU Fusion
 _C.QUANTIZATION.ACT_FUSION = False
 
 # Change Sigmoid to Hardsigmoid
 _C.QUANTIZATION.SIGMOID2HSIGMOID = False
+
+# Quantization methods to check accuracy
+_C.QUANTIZATION.METHOD = (
+    "min_max",
+    "mm_shift",
+    "avg_mm_shift",
+    "histogram",
+    "hist_shift",
+    "float",
+)
+
+# ---------------------------------- QAT options ----------------------------------- #
+_C.QUANTIZATION.QAT = CfgNode()
+
+# Weights to start training from
+_C.QUANTIZATION.QAT.FP32_WEIGHTS = ""
 
 # ---------------------------------- ResNet options ---------------------------------- #
 _C.RESNET = CfgNode()
