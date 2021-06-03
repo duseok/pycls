@@ -1,0 +1,29 @@
+MODEL:
+  TYPE: mobilenetv2
+  NUM_CLASSES: 1000
+  ACTIVATION_FUN: relu6
+MNV2:
+  STEM_W: 32
+  STRIDES: [1, 2, 2, 2, 1, 2, 1] # s
+  DEPTHS: [1, 2, 3, 4, 3, 3, 1] # n
+  WIDTHS: [16, 24, 32, 64, 96, 160, 320] # c
+  EXP_RATIOS: [1, 6, 6, 6, 6, 6, 6] # t
+  # KERNELS
+  HEAD_W: 1280
+OPTIM:
+  LR_POLICY: cos
+  BASE_LR: 0.2 #
+  MAX_EPOCH: 100
+  MOMENTUM: 0.9
+  WEIGHT_DECAY: 5e-5
+  #WARMUP_EPOCHS: 5 #
+TRAIN:
+  DATASET: imagenet
+  IM_SIZE: 224
+  BATCH_SIZE: 256 #
+TEST:
+  DATASET: imagenet
+  IM_SIZE: 256
+  BATCH_SIZE: 200 #
+NUM_GPUS: 2
+OUT_DIR: .
