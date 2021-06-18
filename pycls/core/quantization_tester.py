@@ -272,7 +272,7 @@ def quantize_model_qat(model: Module, method: str):
             reduce_range=False,
         ),
         weight=FakeQuantize.with_args(
-            observer=MovingAverageMinMaxObserver,
+            observer=HistogramShiftObserver,
             quant_min=-128,
             quant_max=127,
             dtype=torch.qint8,
