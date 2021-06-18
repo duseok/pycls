@@ -110,21 +110,16 @@ class MBConv(Module):
         return cx
 
     def fuse_model(self, include_relu: bool):
+        targets = (
+            [["dwise", "dwise_bn", "dwise_af"], ["lin_proj", "lin_proj_bn"]]
+            if include_relu
+            else [["dwise", "dwise_bn"], ["lin_proj", "lin_proj_bn"]]
+        )
         if self.exp:
-            targets = (
-                [
-                    ["exp", "exp_bn", "exp_af"],
-                    ["dwise", "dwise_bn", "dwise_af"],
-                    ["lin_proj", "lin_proj_bn"],
-                ]
-                if include_relu
-                else [
-                    ["exp", "exp_bn"],
-                    ["dwise", "dwise_bn"],
-                    ["lin_proj", "lin_proj_bn"],
-                ]
+            targets.append(
+                ["exp", "exp_bn", "exp_af"] if include_relu else ["exp", "exp_bn"]
             )
-            fuse_modules(self, targets, inplace=True)
+        fuse_modules(self, targets, inplace=True)
         if self.se:
             self.se.fuse_model(include_relu)
 
