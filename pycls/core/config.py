@@ -55,14 +55,7 @@ _C.QUANTIZATION.ACT_FUSION = False
 _C.QUANTIZATION.SIGMOID2HSIGMOID = False
 
 # Quantization methods to check accuracy
-_C.QUANTIZATION.METHOD = (
-    "min_max",
-    "mm_shift",
-    "avg_mm_shift",
-    "histogram",
-    "hist_shift",
-    "float",
-)
+_C.QUANTIZATION.METHOD = "min_max,mm_shift,avg_mm_shift,histogram,hist_shift,float"
 
 # ---------------------------------- QAT options ----------------------------------- #
 _C.QUANTIZATION.QAT = CfgNode()
@@ -398,7 +391,7 @@ _C.LOG_PERIOD = 10
 # Neptune AI
 _C.USE_NEPTUNE = False
 _C.NEPTUNE_CONFIG = "neptune.yaml"
-_C.NEPTUNE_TAGS = []
+_C.NEPTUNE_TAGS = ""
 
 # Distributed backend
 _C.DIST_BACKEND = "nccl"
@@ -469,6 +462,15 @@ def reset_cfg():
     _C.merge_from_other_cfg(_CFG_DEFAULT)
 
 
+def get_tuple(string):
+    string_list = string.split(",")
+    int_list = []
+    for strval in string_list:
+        int_list.append(strval)
+
+    return tuple(int_list)
+
+
 def load_cfg_fom_args(description="Config file options."):
     """Load config from command line arguments and set any specified options."""
     parser = argparse.ArgumentParser(description=description)
@@ -482,3 +484,5 @@ def load_cfg_fom_args(description="Config file options."):
     args = parser.parse_args()
     load_cfg(args.cfg_file)
     _C.merge_from_list(args.opts)
+    cfg.QUANTIZATION.METHOD = get_tuple(cfg.QUANTIZATION.METHOD)
+    cfg.NEPTUNE_TAGS = get_tuple(cfg.NEPTUNE_TAGS)
