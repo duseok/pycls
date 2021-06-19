@@ -349,10 +349,12 @@ def train_qat_network():
         # Train for one epoch
         params = (train_loader, model, ema, loss_fun, optimizer, scaler, train_meter)
         trainer.train_epoch(*params, cur_epoch)
-        if cur_epoch > 3:
+        if cur_epoch == cfg.QUANTIZATION.QAT.OBSERVE_EPOCH - 1:
             model.apply(torch.quantization.disable_observer)
-        if cur_epoch > 2:
+            ema.apply(torch.quantization.disable_observer)
+        if cur_epoch == cfg.QUANTIZATION.QAT.BN_TRAIN_EPOCH - 1:
             model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
+            ema.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
         # Compute precise BN stats
         if cfg.BN.USE_PRECISE_STATS:
             net.compute_precise_bn_stats(model, train_loader)

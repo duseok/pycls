@@ -63,6 +63,12 @@ _C.QUANTIZATION.QAT = CfgNode()
 # Weights to start training from
 _C.QUANTIZATION.QAT.FP32_WEIGHTS = ""
 
+# Number of epochs for observer
+_C.QUANTIZATION.QAT.OBSERVE_EPOCH = 5
+
+# Number of epochs for training BN
+_C.QUANTIZATION.QAT.BN_TRAIN_EPOCH = 5
+
 # ---------------------------------- ResNet options ---------------------------------- #
 _C.RESNET = CfgNode()
 
