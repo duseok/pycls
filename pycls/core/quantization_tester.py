@@ -8,11 +8,7 @@ from typing import TYPE_CHECKING
 import torch
 import torch.cuda.amp as amp
 from torch.quantization.fake_quantize import FakeQuantize
-from torch.quantization.observer import (
-    HistogramObserver,
-    MinMaxObserver,
-    MovingAverageMinMaxObserver,
-)
+from torch.quantization.observer import HistogramObserver, MinMaxObserver
 
 import pycls.core.benchmark as benchmark
 import pycls.core.builders as builders
@@ -315,6 +311,12 @@ def quantize_network_for_qat(model: Module):
     return model, ema, loss_fun, optimizer, start_epoch
 
 
+def copy_qat_variable(src: QuantizedModel, dest: QuantizedModel):
+    for s, d in zip(src.modules(), dest.modules()):
+        if isinstance(s, FakeQuantize) and isinstance(d, FakeQuantize):
+            d.activation_post_process = s.activation_post_process
+
+
 def train_qat_network():
     """Trains the quantized model. Most are copied from 'trainer.py.'"""
     # Setup training/testing environment
@@ -349,19 +351,29 @@ def train_qat_network():
         # Train for one epoch
         params = (train_loader, model, ema, loss_fun, optimizer, scaler, train_meter)
         trainer.train_epoch(*params, cur_epoch)
-        if cur_epoch == cfg.QUANTIZATION.QAT.OBSERVE_EPOCH - 1:
+
+        if cur_epoch <= cfg.QUANTIZATION.QAT.OBSERVE_EPOCH - 1:
             model.apply(torch.quantization.disable_observer)
             ema.apply(torch.quantization.disable_observer)
+            copy_qat_variable(model, ema)
+
         if cur_epoch == cfg.QUANTIZATION.QAT.BN_TRAIN_EPOCH - 1:
             model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
             ema.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
+
         # Compute precise BN stats
         if cfg.BN.USE_PRECISE_STATS:
             net.compute_precise_bn_stats(model, train_loader)
             net.compute_precise_bn_stats(ema, train_loader)
+
         # Evaluate the model
         trainer.test_epoch(test_loader, model, test_meter, cur_epoch)
         trainer.test_epoch(test_loader, ema, ema_meter, cur_epoch)
+
+        if cur_epoch < cfg.QUANTIZATION.QAT.OBSERVE_EPOCH - 1:
+            model.apply(torch.quantization.enable_observer)
+            ema.apply(torch.quantization.enable_observer)
+
         test_err = test_meter.get_epoch_stats(cur_epoch)["top1_err"]
         ema_err = ema_meter.get_epoch_stats(cur_epoch)["top1_err"]
         # Save a checkpoint
