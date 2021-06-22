@@ -470,11 +470,11 @@ def reset_cfg():
 
 def get_tuple(string):
     string_list = string.split(",")
-    int_list = []
+    val_list = []
     for strval in string_list:
-        int_list.append(strval)
+        val_list.append(strval)
 
-    return tuple(int_list)
+    return tuple(val_list)
 
 
 def load_cfg_fom_args(description="Config file options."):
