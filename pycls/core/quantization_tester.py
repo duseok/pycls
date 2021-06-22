@@ -317,6 +317,28 @@ def copy_qat_variable(src: QuantizedModel, dest: QuantizedModel):
             d.activation_post_process = s.activation_post_process
 
 
+def setup_teacher():
+    cfg.defrost()
+    config.load_cfg_fom_args(description="Teacher model", cfg_file=cfg.TRAIN.TEACHER)
+    config.assert_and_infer_cfg()
+    cfg.freeze()
+    teacher = setup_model()
+    assert cfg.TRAIN.TEACHER_WEIGHTS != ""
+    cp.load_checkpoint(cfg.TRAIN.TEACHER_WEIGHTS, teacher, None)
+    logger.info(
+        "Loaded initial teacher weights from: {}".format(cfg.TRAIN.TEACHER_WEIGHTS)
+    )
+    return model2cuda(teacher)
+
+
+def restore_cfg():
+    cfg.defrost()
+    config.reset_cfg()
+    config.load_cfg_fom_args("Restore a network configuration.")
+    config.assert_and_infer_cfg()
+    cfg.freeze()
+
+
 def train_qat_network():
     """Trains the quantized model. Most are copied from 'trainer.py.'"""
     # Setup training/testing environment
@@ -339,6 +361,10 @@ def train_qat_network():
     ema_meter = meters.TestMeter(len(test_loader), "test_ema")
 
     model, ema, loss_fun, optimizer, start_epoch = quantize_network_for_qat(model)
+    teacher = None
+    if str.lower(cfg.TRAIN.TEACHER) != "":
+        teacher = setup_teacher()
+        restore_cfg()
 
     # Create a GradScaler for mixed precision training
     scaler = amp.GradScaler(enabled=cfg.TRAIN.MIXED_PRECISION)
@@ -350,7 +376,7 @@ def train_qat_network():
     for cur_epoch in range(start_epoch, cfg.OPTIM.MAX_EPOCH):
         # Train for one epoch
         params = (train_loader, model, ema, loss_fun, optimizer, scaler, train_meter)
-        trainer.train_epoch(*params, cur_epoch)
+        trainer.train_epoch(*params, cur_epoch, teacher)
 
         if cur_epoch <= cfg.QUANTIZATION.QAT.OBSERVE_EPOCH - 1:
             model.apply(torch.quantization.disable_observer)

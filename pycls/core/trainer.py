@@ -73,7 +73,17 @@ def setup_model():
     return model
 
 
-def train_epoch(loader, model, ema, loss_fun, optimizer, scaler, meter, cur_epoch):
+def get_kd_loss(output, output_t):
+    from torch.nn.functional import softmax, log_softmax
+
+    return -1 * torch.mean(
+        torch.sum(softmax(output_t, dim=1) * log_softmax(output, dim=1), dim=1)
+    )
+
+
+def train_epoch(
+    loader, model, ema, loss_fun, optimizer, scaler, meter, cur_epoch, teacher=None
+):
     """Performs one epoch of training."""
     # Shuffle the data
     data_loader.shuffle(loader, cur_epoch)
@@ -93,9 +103,14 @@ def train_epoch(loader, model, ema, loss_fun, optimizer, scaler, meter, cur_epoc
         # Apply mixup to the batch (no effect if mixup alpha is 0)
         inputs, labels_one_hot, labels = net.mixup(inputs, labels_one_hot)
         # Perform the forward pass and compute the loss
+        if teacher:
+            with torch.no_grad():
+                preds_t = teacher(inputs)
         with amp.autocast(enabled=cfg.TRAIN.MIXED_PRECISION):
             preds = model(inputs)
-            loss = loss_fun(preds, labels_one_hot)
+            loss = loss_fun(preds, labels_one_hot) + (
+                get_kd_loss(preds, preds_t) if teacher else 0.0
+            )
         # Perform the backward pass and update the parameters
         optimizer.zero_grad()
         scaler.scale(loss).backward()

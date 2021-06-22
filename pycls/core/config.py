@@ -55,7 +55,14 @@ _C.QUANTIZATION.ACT_FUSION = False
 _C.QUANTIZATION.SIGMOID2HSIGMOID = False
 
 # Quantization methods to check accuracy
-_C.QUANTIZATION.METHOD = "min_max,mm_shift,avg_mm_shift,histogram,hist_shift,float"
+_C.QUANTIZATION.METHOD = (
+    "min_max",
+    "mm_shift",
+    "avg_mm_shift",
+    "histogram",
+    "hist_shift",
+    "float",
+)
 
 # ---------------------------------- QAT options ----------------------------------- #
 _C.QUANTIZATION.QAT = CfgNode()
@@ -324,6 +331,12 @@ _C.TRAIN.PCA_STD = 0.1
 # Data augmentation to use ("", "AutoAugment", "RandAugment_N2_M0.5", etc.)
 _C.TRAIN.AUGMENT = ""
 
+# Teacher model
+_C.TRAIN.TEACHER = ""
+
+# Teacher weight
+_C.TRAIN.TEACHER_WEIGHTS = ""
+
 
 # --------------------------------- Testing options ---------------------------------- #
 _C.TEST = CfgNode()
@@ -397,7 +410,7 @@ _C.LOG_PERIOD = 10
 # Neptune AI
 _C.USE_NEPTUNE = False
 _C.NEPTUNE_CONFIG = "neptune.yaml"
-_C.NEPTUNE_TAGS = ""
+_C.NEPTUNE_TAGS = ()
 
 # Distributed backend
 _C.DIST_BACKEND = "nccl"
@@ -472,12 +485,13 @@ def get_tuple(string):
     string_list = string.split(",")
     val_list = []
     for strval in string_list:
-        val_list.append(strval)
+        if strval != "":
+            val_list.append(strval)
 
     return tuple(val_list)
 
 
-def load_cfg_fom_args(description="Config file options."):
+def load_cfg_fom_args(description="Config file options.", cfg_file=None):
     """Load config from command line arguments and set any specified options."""
     parser = argparse.ArgumentParser(description=description)
     help_s = "Config file location"
@@ -488,7 +502,13 @@ def load_cfg_fom_args(description="Config file options."):
         parser.print_help()
         sys.exit(1)
     args = parser.parse_args()
-    load_cfg(args.cfg_file)
+    load_cfg(args.cfg_file if cfg_file is None else cfg_file)
+
+    flag = False
+    for idx, val in enumerate(args.opts):
+        if flag:
+            args.opts[idx] = get_tuple(val)
+            flag = False
+        elif val in ["QUANTIZATION.METHOD", "NEPTUNE_TAGS"]:
+            flag = True
     _C.merge_from_list(args.opts)
-    cfg.QUANTIZATION.METHOD = get_tuple(cfg.QUANTIZATION.METHOD)
-    cfg.NEPTUNE_TAGS = get_tuple(cfg.NEPTUNE_TAGS)
