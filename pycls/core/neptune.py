@@ -34,7 +34,12 @@ class SingletonMeta(type):
 class NeptuneLogger(metaclass=SingletonMeta):
     def __init__(self):
         self.__load_cfg()
-        self.nt = neptune.init(project=_C.PROJECT, api_token=_C.TOKEN, tags=_C.TAGS)
+        self.nt = neptune.init(
+            project=_C.PROJECT,
+            api_token=_C.TOKEN,
+            tags=_C.TAGS,
+            run=None if cfg.NEPTUNE_RESUME == "" else cfg.NEPTUNE_RESUME,
+        )
         self.nt["Config"] = cfg
 
     @staticmethod

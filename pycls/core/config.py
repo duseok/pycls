@@ -411,6 +411,7 @@ _C.LOG_PERIOD = 10
 _C.USE_NEPTUNE = False
 _C.NEPTUNE_CONFIG = "neptune.yaml"
 _C.NEPTUNE_TAGS = ()
+_C.NEPTUNE_RESUME = ""
 
 # Distributed backend
 _C.DIST_BACKEND = "nccl"
