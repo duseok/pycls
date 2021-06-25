@@ -28,9 +28,9 @@ def get_checkpoint_dir():
     return os.path.join(cfg.OUT_DIR, _DIR_NAME)
 
 
-def get_checkpoint(epoch):
+def get_checkpoint(epoch, prefix=""):
     """Retrieves the path to a checkpoint file."""
-    name = "{}{:04d}.pyth".format(_NAME_PREFIX, epoch)
+    name = "{}{}{:04d}.pyth".format(prefix, _NAME_PREFIX, epoch)
     return os.path.join(get_checkpoint_dir(), name)
 
 
@@ -55,7 +55,7 @@ def has_checkpoint():
     return any(_NAME_PREFIX in f for f in pathmgr.ls(checkpoint_dir))
 
 
-def save_checkpoint(model, model_ema, optimizer, epoch, test_err, ema_err):
+def save_checkpoint(model, model_ema, optimizer, epoch, test_err, ema_err, prefix=""):
     """Saves a checkpoint and also the best weights so far in a best checkpoint."""
     # Save checkpoints only from the master process
     if not dist.is_master_proc():
@@ -71,9 +71,10 @@ def save_checkpoint(model, model_ema, optimizer, epoch, test_err, ema_err):
         "ema_state": unwrap_model(model_ema).state_dict(),
         "optimizer_state": optimizer.state_dict(),
         "cfg": cfg.dump(),
+        "step": prefix[:-1] if prefix != "" else "default",
     }
     # Write the checkpoint
-    checkpoint_file = get_checkpoint(epoch + 1)
+    checkpoint_file = get_checkpoint(epoch + 1, prefix)
     with pathmgr.open(checkpoint_file, "wb") as f:
         torch.save(checkpoint, f)
     # Store the best model and model_ema weights so far

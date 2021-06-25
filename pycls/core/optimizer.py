@@ -13,7 +13,7 @@ import torch
 from pycls.core.config import cfg
 
 
-def construct_optimizer(model):
+def construct_optimizer(model, params=None, train_weight=True, train_bn=True):
     """Constructs the optimizer.
 
     Note that the momentum update in PyTorch differs from the one in Caffe2.
@@ -44,14 +44,37 @@ def construct_optimizer(model):
         ]
     else:
         optim_params = model.parameters()
-    return torch.optim.SGD(
-        optim_params,
-        lr=cfg.OPTIM.BASE_LR,
-        momentum=cfg.OPTIM.MOMENTUM,
-        weight_decay=cfg.OPTIM.WEIGHT_DECAY,
-        dampening=cfg.OPTIM.DAMPENING,
-        nesterov=cfg.OPTIM.NESTEROV,
-    )
+
+    if params is None:
+        optimizer = torch.optim.SGD(
+            optim_params,
+            lr=cfg.OPTIM.BASE_LR,
+            momentum=cfg.OPTIM.MOMENTUM,
+            weight_decay=cfg.OPTIM.WEIGHT_DECAY,
+            dampening=cfg.OPTIM.DAMPENING,
+            nesterov=cfg.OPTIM.NESTEROV,
+        )
+    else:
+        w_params, b_params = params
+        optimizer = torch.optim.SGD(
+            [
+                {
+                    "params": w_params,
+                    "weight_decay": cfg.OPTIM.WEIGHT_DECAY,
+                    "lr": cfg.OPTIM.BASE_LR if train_weight else 0,
+                },
+                {
+                    "params": b_params,
+                    "weight_decay": 0,
+                    "lr": cfg.OPTIM.BASE_LR if train_bn else 0,
+                },
+            ],
+            momentum=cfg.OPTIM.MOMENTUM,
+            dampening=cfg.OPTIM.DAMPENING,
+            nesterov=cfg.OPTIM.NESTEROV,
+        )
+
+    return optimizer
 
 
 def lr_fun_steps(cur_epoch):

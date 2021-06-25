@@ -76,6 +76,9 @@ _C.QUANTIZATION.QAT.OBSERVE_EPOCH = 5
 # Number of epochs for training BN
 _C.QUANTIZATION.QAT.BN_TRAIN_EPOCH = 5
 
+# Number of epochs for stabilizing BN
+_C.QUANTIZATION.QAT.BN_STABILIZATION_EPOCH = 0
+
 # ---------------------------------- ResNet options ---------------------------------- #
 _C.RESNET = CfgNode()
 
