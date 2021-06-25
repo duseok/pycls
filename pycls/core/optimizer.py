@@ -124,7 +124,8 @@ def get_epoch_lr(cur_epoch):
 def set_lr(optimizer, new_lr):
     """Sets the optimizer lr to the specified value."""
     for param_group in optimizer.param_groups:
-        param_group["lr"] = new_lr
+        if param_group["lr"] != 0:
+            param_group["lr"] = new_lr
 
 
 def plot_lr_fun():
