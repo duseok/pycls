@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING
 
 import torch
 import torch.cuda.amp as amp
+from torch.optim.optimizer import Optimizer
 from torch.quantization.fake_quantize import FakeQuantize
 from torch.quantization.observer import HistogramObserver, MinMaxObserver
 
-import pycls.core.benchmark as benchmark
 import pycls.core.builders as builders
 import pycls.core.checkpoint as cp
 import pycls.core.config as config
@@ -292,23 +292,35 @@ def quantize_network_for_qat(model: Module):
     model = quantize_model_qat(model, cfg.QUANTIZATION.METHOD[0])
     model = model2cuda(model)
     ema = deepcopy(model)
+    copy_qat_variable(model, ema)
     loss_fun = builders.build_loss_fun().cuda()
-    optimizer = optim.construct_optimizer(model)
 
-    start_epoch = 0
-    if cfg.TRAIN.AUTO_RESUME and cp.has_checkpoint():
-        file = cp.get_last_checkpoint()
-        epoch = cp.load_checkpoint(file, model, ema, optimizer)[0]
-        logger.info("Loaded checkpoint from: {}".format(file))
-        start_epoch = epoch + 1
-    elif cfg.TRAIN.WEIGHTS:
-        cp.load_checkpoint(cfg.TRAIN.WEIGHTS, model, ema)
-        logger.info(
-            "Loaded initial quantized weights from: {}".format(cfg.TRAIN.WEIGHTS)
-        )
     logger.info(f"QAT Model:\n {model}")
     logger.info(f"QAT EMA Model:\n {ema}")
-    return model, ema, loss_fun, optimizer, start_epoch
+    return model, ema, loss_fun
+
+
+def get_info_from_checkpoint4qat(file):
+    err_str = "Checkpoint '{}' not found"
+    assert pathmgr.exists(file), err_str.format(file)
+    with pathmgr.open(file, "rb") as f:
+        checkpoint = torch.load(f, map_location="cpu")
+
+    bn_start_epoch, ft_start_epoch = 0, 0
+    if "step" in checkpoint:
+        step = checkpoint["step"]
+        start_epoch = checkpoint["epoch"] + 1
+        if step == "bn_stabilization":
+            bn_start_epoch = start_epoch
+        else:
+            ft_start_epoch = start_epoch
+    else:
+        logger.warning(
+            f"This checkpoint does not contain 'step.' Load weights and start from stabilizing BN."
+        )
+        step = "bn_stabilization"
+
+    return step, bn_start_epoch, ft_start_epoch
 
 
 def copy_qat_variable(src: QuantizedModel, dest: QuantizedModel):
@@ -339,6 +351,58 @@ def restore_cfg():
     cfg.freeze()
 
 
+def categorize_params(model):
+    bnbias = []
+    weights = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        elif len(param.shape) == 1 or name.endswith(".bias"):
+            bnbias.append(param)
+        else:
+            weights.append(param)
+    return weights, bnbias
+
+
+def stabilize_bn(
+    model: Module,
+    ema: Module,
+    teacher: Module,
+    start_epoch: int,
+    train_loader: DataLoader,
+    test_loader: DataLoader,
+    loss_fun: Module,
+    optimizer: Optimizer,
+    scaler: amp.GradScaler,
+    train_meter: meters.TrainMeter,
+    test_meter: meters.TrainMeter,
+    ema_meter: meters.TrainMeter,
+):
+    max_finetune_epoch = cfg.OPTIM.MAX_EPOCH
+    cfg.defrost()
+    cfg.OPTIM.MAX_EPOCH = cfg.QUANTIZATION.QAT.BN_STABILIZATION_EPOCH
+    cfg.freeze()
+    logger.info("Start BN stabilization (Epoch: {})".format(start_epoch + 1))
+    run_qat_newtork(
+        model,
+        ema,
+        teacher,
+        start_epoch,
+        train_loader,
+        test_loader,
+        loss_fun,
+        optimizer,
+        scaler,
+        train_meter,
+        test_meter,
+        ema_meter,
+        prefix="bn_stabilization_",
+    )
+    cfg.defrost()
+    cfg.OPTIM.MAX_EPOCH = max_finetune_epoch
+    cfg.freeze()
+
+
 def train_qat_network():
     """Trains the quantized model. Most are copied from 'trainer.py.'"""
     # Setup training/testing environment
@@ -360,7 +424,18 @@ def train_qat_network():
     test_meter = meters.TestMeter(len(test_loader))
     ema_meter = meters.TestMeter(len(test_loader), "test_ema")
 
-    model, ema, loss_fun, optimizer, start_epoch = quantize_network_for_qat(model)
+    model, ema, loss_fun = quantize_network_for_qat(model)
+    bn_start_epoch, ft_start_epoch = 0, 0
+    start_step = "bn_stabilization"
+    checkpoint_file = None
+    if cp.has_checkpoint() or cfg.TRAIN.WEIGHTS:
+        checkpoint_file = (
+            cp.get_last_checkpoint() if cp.has_checkpoint() else cfg.TRAIN.WEIGHTS
+        )
+        start_step, bn_start_epoch, ft_start_epoch = get_info_from_checkpoint4qat(
+            checkpoint_file
+        )
+
     teacher = None
     if str.lower(cfg.TRAIN.TEACHER) != "":
         teacher = setup_teacher()
@@ -368,11 +443,65 @@ def train_qat_network():
 
     # Create a GradScaler for mixed precision training
     scaler = amp.GradScaler(enabled=cfg.TRAIN.MIXED_PRECISION)
-    # Compute model and loader timings
-    if start_epoch == 0 and cfg.PREC_TIME.NUM_ITER > 0:
-        benchmark.compute_time_full(model, loss_fun, train_loader, test_loader)
+
+    train_params = categorize_params(model)
+    if start_step == "bn_stabilization":
+        stabilize_opt = optim.construct_optimizer(model, train_params, False)
+        if checkpoint_file:
+            cp.load_checkpoint(checkpoint_file, model, ema, stabilize_opt)
+        stabilize_bn(
+            model,
+            ema,
+            teacher,
+            bn_start_epoch,
+            train_loader,
+            test_loader,
+            loss_fun,
+            stabilize_opt,
+            scaler,
+            train_meter,
+            test_meter,
+            ema_meter,
+        )
+
+    logger.info("Start finetuing (Epoch: {})".format(ft_start_epoch + 1))
+    optimizer = optim.construct_optimizer(model, train_params)
+    if start_step == "default":
+        cp.load_checkpoint(checkpoint_file, model, ema, optimizer)
+    run_qat_newtork(
+        model,
+        ema,
+        teacher,
+        ft_start_epoch,
+        train_loader,
+        test_loader,
+        loss_fun,
+        optimizer,
+        scaler,
+        train_meter,
+        test_meter,
+        ema_meter,
+        bn_freeze=True,
+    )
+
+
+def run_qat_newtork(
+    model: Module,
+    ema: Module,
+    teacher: Module,
+    start_epoch: int,
+    train_loader: DataLoader,
+    test_loader: DataLoader,
+    loss_fun: Module,
+    optimizer: Optimizer,
+    scaler: amp.GradScaler,
+    train_meter: meters.TrainMeter,
+    test_meter: meters.TrainMeter,
+    ema_meter: meters.TrainMeter,
+    bn_freeze=False,
+    prefix="",
+):
     # Perform the training loop
-    logger.info("Start epoch: {}".format(start_epoch + 1))
     for cur_epoch in range(start_epoch, cfg.OPTIM.MAX_EPOCH):
         # Train for one epoch
         params = (train_loader, model, ema, loss_fun, optimizer, scaler, train_meter)
@@ -381,9 +510,8 @@ def train_qat_network():
         if cur_epoch <= cfg.QUANTIZATION.QAT.OBSERVE_EPOCH - 1:
             model.apply(torch.quantization.disable_observer)
             ema.apply(torch.quantization.disable_observer)
-            copy_qat_variable(model, ema)
 
-        if cur_epoch == cfg.QUANTIZATION.QAT.BN_TRAIN_EPOCH - 1:
+        if bn_freeze and cur_epoch <= cfg.QUANTIZATION.QAT.BN_TRAIN_EPOCH - 1:
             model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
             ema.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
 
@@ -403,5 +531,7 @@ def train_qat_network():
         test_err = test_meter.get_epoch_stats(cur_epoch)["top1_err"]
         ema_err = ema_meter.get_epoch_stats(cur_epoch)["top1_err"]
         # Save a checkpoint
-        file = cp.save_checkpoint(model, ema, optimizer, cur_epoch, test_err, ema_err)
+        file = cp.save_checkpoint(
+            model, ema, optimizer, cur_epoch, test_err, ema_err, prefix
+        )
         logger.info("Wrote checkpoint to: {}".format(file))
