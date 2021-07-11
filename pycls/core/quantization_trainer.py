@@ -182,7 +182,8 @@ def train_qat_network():
 
     if not checkpoint_file:
         logger.info("Start Calibration")
-        calibrate_model(model, train_loader, model.device, 1000 / cfg.TRAIN.BATCH_SIZE)
+        cur_device = torch.cuda.current_device()
+        calibrate_model(model, train_loader, cur_device, 1000 / cfg.TRAIN.BATCH_SIZE)
     model.apply(torch.quantization.disable_observer)
     ema.apply(torch.quantization.disable_observer)
 
