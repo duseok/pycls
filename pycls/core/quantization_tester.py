@@ -191,7 +191,7 @@ def test_qat_network():
     trainer.test_epoch(test_loader, model, test_meter, 0)
 
     cpu_device = torch.device("cpu")
-    model = model.module.to(cpu_device)
+    model = net.unwrap_model(model).to(cpu_device)
     _convert(model)
     model = model2cuda(model)
     print(model)
