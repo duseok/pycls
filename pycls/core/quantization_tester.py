@@ -2,14 +2,7 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import TYPE_CHECKING
-
-import torch
-import torch.cuda.amp as amp
-from torch.optim.optimizer import Optimizer
-from torch.quantization.fake_quantize import FakeQuantize
-from torch.quantization.observer import HistogramObserver, MinMaxObserver
 
 import pycls.core.builders as builders
 import pycls.core.checkpoint as cp
@@ -17,17 +10,22 @@ import pycls.core.config as config
 import pycls.core.logging as logging
 import pycls.core.meters as meters
 import pycls.core.net as net
-import pycls.core.optimizer as optim
 import pycls.core.trainer as trainer
 import pycls.datasets.loader as data_loader
+import torch
 from pycls.core.config import cfg
 from pycls.core.io import pathmgr
-from pycls.models.model_quantizer import (
-    HistogramShiftObserver,
-    MinMaxShiftObserver,
-    MovingAvgMinMaxShiftObserver,
-    QuantizedModel,
+from pycls.core.quantization_utils import (
+    calibrate_model,
+    fuse_network,
+    get_observer,
+    model2cuda,
+    quantize_network_for_qat,
+    setup_model,
 )
+from pycls.quantization.hw_quant_op import QuantOps
+from pycls.quantization.quantizer import QuantizedModel
+from torch.quantization.observer import HistogramObserver
 
 if TYPE_CHECKING:
     from torch.nn import Module
@@ -36,7 +34,7 @@ if TYPE_CHECKING:
 logger = logging.get_logger(__name__)
 
 
-def setup_cpu_env():
+def _setup_cpu_env():
     """Sets up environment for quatized model testing."""
     # Ensure that the output dir exists
     pathmgr.mkdirs(cfg.OUT_DIR)
@@ -51,45 +49,7 @@ def setup_cpu_env():
     logger.info(logging.dump_log_data(cfg, "cfg", None))
 
 
-def model_equivalence(
-    model_1: Module,
-    model_2: Module,
-    rtol=1e-05,
-    atol=1e-08,
-    num_tests=100,
-    input_size=(1, 3, 32, 32),
-):
-    for _ in range(num_tests):
-        x = torch.rand(size=input_size)
-        y1 = model_1(x)
-        y2 = model_2(x)
-        if not torch.allclose(y1, y2, rtol=rtol, atol=atol, equal_nan=False):
-            print("Model equivalence test sample failed: ")
-            print(y1)
-            print(y2)
-            return False
-
-    return True
-
-
-def fuse_network(model: Module):
-    fused_model = deepcopy(model)
-    fused_model.eval()
-    model.eval()
-    fused_model.fuse_model(cfg.QUANTIZATION.ACT_FUSION)
-    # Model and fused model should be equivalent.
-    assert model_equivalence(
-        model_1=model,
-        model_2=fused_model,
-        rtol=1e-02,
-        atol=1e-04,
-        num_tests=100,
-        input_size=(1, 3, 224, 224),
-    ), "Fused model is not equivalent to the original model!"
-    return fused_model
-
-
-def setup_cpu_model():
+def _setup_cpu_model():
     """Sets up a model and log the results."""
     # Build the model
     model = builders.build_model()
@@ -100,7 +60,7 @@ def setup_cpu_model():
 
 
 @torch.no_grad()
-def test_cpu_model_epoch(
+def _test_cpu_model_epoch(
     loader: DataLoader, model: QuantizedModel, meter: meters.TestMeter, cur_epoch: int
 ):
     """Evaluates the model on the test set."""
@@ -123,35 +83,7 @@ def test_cpu_model_epoch(
     meter.log_epoch_stats(cur_epoch)
 
 
-def calibrate_model(
-    model: QuantizedModel, loader: DataLoader, device=torch.device("cpu:0")
-):
-    model.to(device)
-    model.eval()
-    for inputs, labels in loader:
-        inputs = inputs.to(device)
-        labels = labels.to(device)
-        _ = model(inputs)
-
-
-def get_observer(method: str):
-    observer = None
-    if "min_max" == method:
-        observer = MinMaxObserver
-    elif "mm_shift" == method:
-        observer = MinMaxShiftObserver
-    elif "avg_mm_shift" == method:
-        observer = MovingAvgMinMaxShiftObserver
-    elif "histogram" == method:
-        observer = HistogramObserver
-    elif "hist_shift" == method:
-        observer = HistogramShiftObserver
-    else:
-        raise AttributeError("Not supported")
-    return observer
-
-
-def quantize_model(model: Module, loader: DataLoader, method: str):
+def _quantize_model4ptq(model: Module, loader: DataLoader, method: str):
     quantized_model = QuantizedModel(model_fp32=model)
 
     observer = get_observer(method)
@@ -180,9 +112,9 @@ def quantize_model(model: Module, loader: DataLoader, method: str):
 def test_quantized_model():
     """Evaluates a quantized model."""
     # Setup training/testing environment
-    setup_cpu_env()
+    _setup_cpu_env()
     # Construct the model
-    model = setup_cpu_model()
+    model = _setup_cpu_model()
     # Load model weights
     cp.load_checkpoint(cfg.TEST.WEIGHTS, model)
     logger.info("Loaded model weights from: {}".format(cfg.TEST.WEIGHTS))
@@ -197,31 +129,39 @@ def test_quantized_model():
     quantized_model = None
 
     if "min_max" in cfg.QUANTIZATION.METHOD:
-        quantized_model = quantize_model(fused_model, calibration_loader, "min_max")
+        quantized_model = _quantize_model4ptq(
+            fused_model, calibration_loader, "min_max"
+        )
         logger.info("Min-Max")
-        test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
+        _test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
 
     if "mm_shift" in cfg.QUANTIZATION.METHOD:
-        quantized_model = quantize_model(fused_model, calibration_loader, "mm_shift")
+        quantized_model = _quantize_model4ptq(
+            fused_model, calibration_loader, "mm_shift"
+        )
         logger.info(f"Min-Max Shift Quantization")
-        test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
+        _test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
 
     if "avg_mm_shift" in cfg.QUANTIZATION.METHOD:
-        quantized_model = quantize_model(
+        quantized_model = _quantize_model4ptq(
             fused_model, calibration_loader, "avg_mm_shift"
         )
         logger.info(f"Moving Average Min-Max Shift Quantization")
-        test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
+        _test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
 
     if "histogram" in cfg.QUANTIZATION.METHOD:
-        quantized_model = quantize_model(fused_model, calibration_loader, "histogram")
+        quantized_model = _quantize_model4ptq(
+            fused_model, calibration_loader, "histogram"
+        )
         logger.info(f"Histogram Quantization")
-        test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
+        _test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
 
     if "hist_shift" in cfg.QUANTIZATION.METHOD:
-        quantized_model = quantize_model(fused_model, calibration_loader, "hist_shift")
+        quantized_model = _quantize_model4ptq(
+            fused_model, calibration_loader, "hist_shift"
+        )
         logger.info(f"Histogram Shift Quantization")
-        test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
+        _test_cpu_model_epoch(test_loader, quantized_model, test_meter, 0)
 
     if "float" in cfg.QUANTIZATION.METHOD:
         logger.info("Float32")
@@ -230,308 +170,42 @@ def test_quantized_model():
         trainer.test_epoch(test_loader, model, test_meter, 0)
 
 
-def setup_model():
-    """Sets up a model for training or testing and log the results."""
-    # Build the model
-    model = builders.build_model()
-    logger.info("Model:\n{}".format(model)) if cfg.VERBOSE else ()
-    # Log model complexity
-    logger.info(logging.dump_log_data(net.complexity(model), "complexity"))
-    return model
-
-
-def model2cuda(model: Module):
-    # Transfer the model to the current GPU device
-    err_str = "Cannot use more GPU devices than available"
-    assert cfg.NUM_GPUS <= torch.cuda.device_count(), err_str
-    cur_device = torch.cuda.current_device()
-    model = model.cuda(device=cur_device)
-    # Use multi-process data parallel model in the multi-gpu setting
-    if cfg.NUM_GPUS > 1:
-        # Make model replica operate on the current device
-        ddp = torch.nn.parallel.DistributedDataParallel
-        model = ddp(module=model, device_ids=[cur_device], output_device=cur_device)
-    return model
-
-
-def quantize_model_qat(model: Module, method: str):
-    quantized_model = QuantizedModel(model_fp32=model)
-
-    observer = get_observer(method)
-    quantization_config = torch.quantization.QConfig(
-        activation=FakeQuantize.with_args(
-            observer=observer,
-            quant_min=0,
-            quant_max=255,
-            dtype=torch.quint8,
-            qscheme=torch.per_tensor_symmetric,
-            reduce_range=False,
-        ),
-        weight=FakeQuantize.with_args(
-            observer=HistogramShiftObserver,
-            quant_min=-128,
-            quant_max=127,
-            dtype=torch.qint8,
-            qscheme=torch.per_tensor_symmetric,
-            reduce_range=False,
-        ),
-    )
-    quantized_model.qconfig = quantization_config
-
-    quantized_model = torch.quantization.prepare_qat(quantized_model, inplace=True)
-    return quantized_model
-
-
-def quantize_network_for_qat(model: Module):
-    model.train()
-    model = fuse_network(model)
-
-    assert (
-        len(cfg.QUANTIZATION.METHOD) == 1
-    ), "When testing QAT, only one quantization method is supported."
-    model = quantize_model_qat(model, cfg.QUANTIZATION.METHOD[0])
-    model = model2cuda(model)
-    ema = deepcopy(model)
-    copy_qat_variable(model, ema)
-    loss_fun = builders.build_loss_fun().cuda()
-
-    logger.info(f"QAT Model:\n {model}")
-    logger.info(f"QAT EMA Model:\n {ema}")
-    return model, ema, loss_fun
-
-
-def get_info_from_checkpoint4qat(file):
-    err_str = "Checkpoint '{}' not found"
-    assert pathmgr.exists(file), err_str.format(file)
-    with pathmgr.open(file, "rb") as f:
-        checkpoint = torch.load(f, map_location="cpu")
-
-    bn_start_epoch, ft_start_epoch = 0, 0
-    if "step" in checkpoint:
-        step = checkpoint["step"]
-        start_epoch = checkpoint["epoch"] + 1
-        if step == "bn_stabilization":
-            bn_start_epoch = start_epoch
-        else:
-            ft_start_epoch = start_epoch
-    else:
-        logger.warning(
-            f"This checkpoint does not contain 'step.' Load weights and start from stabilizing BN."
-        )
-        step = "bn_stabilization"
-
-    return step, bn_start_epoch, ft_start_epoch
-
-
-def copy_qat_variable(src: QuantizedModel, dest: QuantizedModel):
-    for s, d in zip(src.modules(), dest.modules()):
-        if isinstance(s, FakeQuantize) and isinstance(d, FakeQuantize):
-            d.activation_post_process = s.activation_post_process
-
-
-def setup_teacher():
-    cfg.defrost()
-    config.load_cfg_fom_args(description="Teacher model", cfg_file=cfg.TRAIN.TEACHER)
-    config.assert_and_infer_cfg()
-    cfg.freeze()
-    teacher = setup_model()
-    assert cfg.TRAIN.TEACHER_WEIGHTS != ""
-    cp.load_checkpoint(cfg.TRAIN.TEACHER_WEIGHTS, teacher, None)
-    logger.info(
-        "Loaded initial teacher weights from: {}".format(cfg.TRAIN.TEACHER_WEIGHTS)
-    )
-    return model2cuda(teacher)
-
-
-def restore_cfg():
-    cfg.defrost()
-    config.reset_cfg()
-    config.load_cfg_fom_args("Restore a network configuration.")
-    config.assert_and_infer_cfg()
-    cfg.freeze()
-
-
-def categorize_params(model):
-    bnbias = []
-    weights = []
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
-        elif len(param.shape) == 1 or name.endswith(".bias"):
-            bnbias.append(param)
-        else:
-            weights.append(param)
-    return weights, bnbias
-
-
-def stabilize_bn(
-    model: Module,
-    ema: Module,
-    teacher: Module,
-    start_epoch: int,
-    train_loader: DataLoader,
-    test_loader: DataLoader,
-    loss_fun: Module,
-    optimizer: Optimizer,
-    scaler: amp.GradScaler,
-    train_meter: meters.TrainMeter,
-    test_meter: meters.TrainMeter,
-    ema_meter: meters.TrainMeter,
-):
-    max_finetune_epoch = cfg.OPTIM.MAX_EPOCH
-    cfg.defrost()
-    cfg.OPTIM.MAX_EPOCH = cfg.QUANTIZATION.QAT.BN_STABILIZATION_EPOCH
-    cfg.freeze()
-    logger.info("Start BN stabilization (Epoch: {})".format(start_epoch + 1))
-    run_qat_newtork(
-        model,
-        ema,
-        teacher,
-        start_epoch,
-        train_loader,
-        test_loader,
-        loss_fun,
-        optimizer,
-        scaler,
-        train_meter,
-        test_meter,
-        ema_meter,
-        prefix="bn_stabilization_",
-    )
-    cfg.defrost()
-    cfg.OPTIM.MAX_EPOCH = max_finetune_epoch
-    cfg.freeze()
-
-
-def train_qat_network():
+def test_qat_network():
     """Trains the quantized model. Most are copied from 'trainer.py.'"""
     # Setup training/testing environment
     trainer.setup_env()
     # Construct the model, loss_fun, and optimizer
     model = setup_model()
-    # Load checkpoint or initial weights
-    if cfg.QUANTIZATION.QAT.FP32_WEIGHTS:
-        cp.load_checkpoint(cfg.QUANTIZATION.QAT.FP32_WEIGHTS, model, None)
-        logger.info(
-            "Loaded initial fp32 weights from: {}".format(
-                cfg.QUANTIZATION.QAT.FP32_WEIGHTS
-            )
-        )
     # Create data loaders and meters
-    train_loader = data_loader.construct_train_loader()
     test_loader = data_loader.construct_test_loader()
-    train_meter = meters.TrainMeter(len(train_loader))
     test_meter = meters.TestMeter(len(test_loader))
-    ema_meter = meters.TestMeter(len(test_loader), "test_ema")
 
-    model, ema, loss_fun = quantize_network_for_qat(model)
-    bn_start_epoch, ft_start_epoch = 0, 0
-    start_step = "bn_stabilization"
-    checkpoint_file = None
-    if cp.has_checkpoint() or cfg.TRAIN.WEIGHTS:
+    model, _, _ = quantize_network_for_qat(model)
+    if cp.has_checkpoint() or cfg.TEST.WEIGHTS:
         checkpoint_file = (
-            cp.get_last_checkpoint() if cp.has_checkpoint() else cfg.TRAIN.WEIGHTS
+            cp.get_last_checkpoint() if cp.has_checkpoint() else cfg.TEST.WEIGHTS
         )
-        start_step, bn_start_epoch, ft_start_epoch = get_info_from_checkpoint4qat(
-            checkpoint_file
-        )
+        cp.load_checkpoint(checkpoint_file, model)
 
-    teacher = None
-    if str.lower(cfg.TRAIN.TEACHER) != "":
-        teacher = setup_teacher()
-        restore_cfg()
+    logger.info("GPU Results")
+    trainer.test_epoch(test_loader, model, test_meter, 0)
 
-    # Create a GradScaler for mixed precision training
-    scaler = amp.GradScaler(enabled=cfg.TRAIN.MIXED_PRECISION)
-
-    train_params = categorize_params(model)
-    if start_step == "bn_stabilization":
-        stabilize_opt = optim.construct_optimizer(model, train_params, False)
-        if checkpoint_file:
-            cp.load_checkpoint(checkpoint_file, model, ema, stabilize_opt)
-        stabilize_bn(
-            model,
-            ema,
-            teacher,
-            bn_start_epoch,
-            train_loader,
-            test_loader,
-            loss_fun,
-            stabilize_opt,
-            scaler,
-            train_meter,
-            test_meter,
-            ema_meter,
-        )
-
-    logger.info("Start finetuing (Epoch: {})".format(ft_start_epoch + 1))
-    optimizer = optim.construct_optimizer(model, train_params)
-    if start_step == "default":
-        cp.load_checkpoint(checkpoint_file, model, ema, optimizer)
-    run_qat_newtork(
-        model,
-        ema,
-        teacher,
-        ft_start_epoch,
-        train_loader,
-        test_loader,
-        loss_fun,
-        optimizer,
-        scaler,
-        train_meter,
-        test_meter,
-        ema_meter,
-        bn_freeze=True,
-    )
+    cpu_device = torch.device("cpu")
+    model = model.module.to(cpu_device)
+    _convert(model)
+    model = model2cuda(model)
+    print(model)
+    logger.info("MIDAP Results")
+    trainer.test_epoch(test_loader, model, test_meter, 0)
 
 
-def run_qat_newtork(
-    model: Module,
-    ema: Module,
-    teacher: Module,
-    start_epoch: int,
-    train_loader: DataLoader,
-    test_loader: DataLoader,
-    loss_fun: Module,
-    optimizer: Optimizer,
-    scaler: amp.GradScaler,
-    train_meter: meters.TrainMeter,
-    test_meter: meters.TrainMeter,
-    ema_meter: meters.TrainMeter,
-    bn_freeze=False,
-    prefix="",
-):
-    # Perform the training loop
-    for cur_epoch in range(start_epoch, cfg.OPTIM.MAX_EPOCH):
-        # Train for one epoch
-        params = (train_loader, model, ema, loss_fun, optimizer, scaler, train_meter)
-        trainer.train_epoch(*params, cur_epoch, teacher)
+def _convert(module):
+    swapped_module = {}
+    for n, m in module.named_children():
+        if type(m) in QuantOps:
+            swapped_module[n] = QuantOps[type(m)].from_trained_op(m)
+        else:
+            _convert(m)
 
-        if cur_epoch <= cfg.QUANTIZATION.QAT.OBSERVE_EPOCH - 1:
-            model.apply(torch.quantization.disable_observer)
-            ema.apply(torch.quantization.disable_observer)
-
-        if bn_freeze and cur_epoch <= cfg.QUANTIZATION.QAT.BN_TRAIN_EPOCH - 1:
-            model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
-            ema.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
-
-        # Compute precise BN stats
-        if cfg.BN.USE_PRECISE_STATS:
-            net.compute_precise_bn_stats(model, train_loader)
-            net.compute_precise_bn_stats(ema, train_loader)
-
-        # Evaluate the model
-        trainer.test_epoch(test_loader, model, test_meter, cur_epoch)
-        trainer.test_epoch(test_loader, ema, ema_meter, cur_epoch)
-
-        if cur_epoch < cfg.QUANTIZATION.QAT.OBSERVE_EPOCH - 1:
-            model.apply(torch.quantization.enable_observer)
-            ema.apply(torch.quantization.enable_observer)
-
-        test_err = test_meter.get_epoch_stats(cur_epoch)["top1_err"]
-        ema_err = ema_meter.get_epoch_stats(cur_epoch)["top1_err"]
-        # Save a checkpoint
-        file = cp.save_checkpoint(
-            model, ema, optimizer, cur_epoch, test_err, ema_err, prefix
-        )
-        logger.info("Wrote checkpoint to: {}".format(file))
+    for n, m in swapped_module.items():
+        module._modules[n] = m

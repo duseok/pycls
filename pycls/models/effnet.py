@@ -235,3 +235,10 @@ class EffNet(Module):
             if type(m) == EffStage:
                 m.fuse_model(include_relu)
         self.head.fuse_model(include_relu)
+
+    def postprocess_skip(self):
+        for mod in self.modules():
+            if isinstance(mod, EffStage) and len(mod._modules) > 1:
+                fakeq = mod._modules["b1"].lin_proj.activation_post_process
+                for _, m in list(mod._modules.items())[1:]:
+                    m.lin_proj.activation_post_process = fakeq

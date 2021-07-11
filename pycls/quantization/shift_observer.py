@@ -1,28 +1,12 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import TYPE_CHECKING
 
 import torch
-import torch.nn as nn
 from torch.quantization.observer import HistogramObserver, MinMaxObserver
 
 if TYPE_CHECKING:
     from typing import Tuple
-
-
-class QuantizedModel(nn.Module):
-    def __init__(self, model_fp32: nn.Module):
-        super(QuantizedModel, self).__init__()
-        self.quant = torch.quantization.QuantStub()
-        self.dequant = torch.quantization.DeQuantStub()
-        self.model_fp32 = deepcopy(model_fp32)
-
-    def forward(self, x):
-        x = self.quant(x)
-        x = self.model_fp32(x)
-        x = self.dequant(x)
-        return x
 
 
 class MinMaxShiftObserver(MinMaxObserver):
@@ -33,11 +17,12 @@ class MinMaxShiftObserver(MinMaxObserver):
         reduce_range=False,
         quant_min=None,
         quant_max=None,
+        factory_kwargs=None,
     ):
         if qscheme != torch.per_tensor_symmetric:
             raise NotImplemented("Currently only support for 'per_tensor_symetric'")
         super(MinMaxShiftObserver, self).__init__(
-            dtype, qscheme, reduce_range, quant_min, quant_max
+            dtype, qscheme, reduce_range, quant_min, quant_max, factory_kwargs
         )
 
     def forward(self, x_orig):
@@ -65,11 +50,12 @@ class MovingAvgMinMaxShiftObserver(MinMaxObserver):
         reduce_range=False,
         quant_min=None,
         quant_max=None,
+        factory_kwargs=None,
     ):
         if qscheme != torch.per_tensor_symmetric:
             raise NotImplemented("Currently only support for 'per_tensor_symetric'")
         super(MovingAvgMinMaxShiftObserver, self).__init__(
-            dtype, qscheme, reduce_range, quant_min, quant_max
+            dtype, qscheme, reduce_range, quant_min, quant_max, factory_kwargs
         )
         self.averaging_constant = averaging_constant
         self._min_val_raw = torch.Tensor(0)
@@ -108,11 +94,12 @@ class HistogramShiftObserver(HistogramObserver):
         dtype: torch.dtype = torch.quint8,
         qscheme=torch.per_tensor_affine,
         reduce_range=False,
+        factory_kwargs=None,
     ):
         if qscheme != torch.per_tensor_symmetric:
             raise NotImplemented("Currently only support for 'per_tensor_symetric'")
         super(HistogramShiftObserver, self).__init__(
-            bins, upsample_rate, dtype, qscheme, reduce_range
+            bins, upsample_rate, dtype, qscheme, reduce_range, factory_kwargs
         )
 
     def _get_norm(

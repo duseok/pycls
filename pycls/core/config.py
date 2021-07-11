@@ -74,10 +74,19 @@ _C.QUANTIZATION.QAT.FP32_WEIGHTS = ""
 _C.QUANTIZATION.QAT.OBSERVE_EPOCH = 5
 
 # Number of epochs for training BN
-_C.QUANTIZATION.QAT.BN_TRAIN_EPOCH = 5
+_C.QUANTIZATION.QAT.BN_TRAIN_EPOCH = -1
 
 # Number of epochs for stabilizing BN
 _C.QUANTIZATION.QAT.BN_STABILIZATION_EPOCH = 0
+
+# Same scale value for skip connection
+_C.QUANTIZATION.QAT.TRAIN_SAME_SCALE4SKIP = True
+
+# Replace AvgPool to shift op
+_C.QUANTIZATION.QAT.TRAIN_SHIFT_AVG_POOL = True
+
+# Enable bias quantization
+_C.QUANTIZATION.QAT.TRAIN_SHIFT_BIAS_QUANTIZATION = True
 
 # ---------------------------------- ResNet options ---------------------------------- #
 _C.RESNET = CfgNode()

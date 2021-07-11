@@ -13,7 +13,9 @@ import torch
 from pycls.core.config import cfg
 
 
-def construct_optimizer(model, params=None, train_weight=True, train_bn=True):
+def construct_optimizer(
+    model, params=None, train_weight=True, train_bn=True, train_scale=True
+):
     """Constructs the optimizer.
 
     Note that the momentum update in PyTorch differs from the one in Caffe2.
@@ -55,7 +57,7 @@ def construct_optimizer(model, params=None, train_weight=True, train_bn=True):
             nesterov=cfg.OPTIM.NESTEROV,
         )
     else:
-        w_params, b_params = params
+        w_params, b_params, s_params = params
         optimizer = torch.optim.SGD(
             [
                 {
@@ -67,6 +69,11 @@ def construct_optimizer(model, params=None, train_weight=True, train_bn=True):
                     "params": b_params,
                     "weight_decay": 0,
                     "lr": cfg.OPTIM.BASE_LR if train_bn else 0,
+                },
+                {
+                    "params": s_params,
+                    "weight_decay": 0,
+                    "lr": cfg.OPTIM.BASE_LR if train_scale else 0,
                 },
             ],
             momentum=cfg.OPTIM.MOMENTUM,
