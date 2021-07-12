@@ -1,5 +1,3 @@
-from typing import Any
-
 import torch
 import torch.nn.functional as F
 from torch.nn.qat import Conv2d, Linear
@@ -13,18 +11,6 @@ class ShiftScaleQuant(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         return grad_output
-
-
-class RoundQuant(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx: Any, bias, scale) -> Any:
-        qbias = bias.div(scale).round_()
-        qbias = qbias.clamp(min=-128, max=127).mul_(scale)
-        return qbias
-
-    @staticmethod
-    def backward(ctx: Any, grad_outputs) -> Any:
-        return grad_outputs, None
 
 
 class QConv2d(Conv2d):
@@ -69,7 +55,15 @@ class QConv2d(Conv2d):
             scale = ShiftScaleQuant.apply(
                 F.softplus(self.activation_post_process.scale)
             )
-            qbias = RoundQuant.apply(self.bias, scale)
+            qbias = torch._fake_quantize_learnable_per_tensor_affine(
+                self.bias,
+                scale,
+                torch.tensor([0.0], device=self.bias.device),
+                -128,
+                127,
+                1.0,
+            )
+            # qbias = RoundQuant.apply(self.bias, scale)
         return self._conv_forward(input, qweight, qbias)
 
 
@@ -103,5 +97,12 @@ class QLinear(Linear):
             scale = ShiftScaleQuant.apply(
                 F.softplus(self.activation_post_process.scale)
             )
-            qbias = RoundQuant.apply(self.bias, scale)
+            qbias = torch._fake_quantize_learnable_per_tensor_affine(
+                self.bias,
+                scale,
+                torch.tensor([0.0], device=self.bias.device),
+                -128,
+                127,
+                1.0,
+            )
         return F.linear(input, qweight, qbias)

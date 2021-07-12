@@ -253,7 +253,7 @@ def _run_qat_newtork(
         params = (train_loader, model, ema, loss_fun, optimizer, scaler, train_meter)
         trainer.train_epoch(*params, cur_epoch, teacher)
 
-        if bn_freeze and cur_epoch <= cfg.QUANTIZATION.QAT.BN_TRAIN_EPOCH - 1:
+        if bn_freeze and cur_epoch >= cfg.QUANTIZATION.QAT.BN_TRAIN_EPOCH - 1:
             model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
             ema.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
 
