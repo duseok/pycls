@@ -23,6 +23,8 @@ class ShiftFakeQuantize(FakeQuantizeBase):
         super().__init__()
         self.quant_min = quant_min
         self.quant_max = quant_max
+        observer_kwargs["quant_min"] = quant_min
+        observer_kwargs["quant_max"] = quant_max
         self.activation_post_process = observer(**observer_kwargs)
         assert (
             torch.iinfo(self.activation_post_process.dtype).min <= quant_min

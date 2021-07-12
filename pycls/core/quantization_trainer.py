@@ -139,6 +139,16 @@ def _enable_bias_quant(module):
             _enable_bias_quant(m)
 
 
+def _correct_zero_point(module):
+    from pycls.quantization.shift_fake_quantizer import ShiftFakeQuantize
+
+    for _, m in module.named_children():
+        if isinstance(m, ShiftFakeQuantize) and m.zero_point != 0:
+            m.zero_point.copy_(torch.tensor([(m.quant_max + m.quant_min) // 2]))
+        else:
+            _correct_zero_point(m)
+
+
 def train_qat_network():
     """Trains the quantized model. Most are copied from 'trainer.py.'"""
     # Setup training/testing environment
@@ -168,9 +178,12 @@ def train_qat_network():
         checkpoint_file = (
             cp.get_last_checkpoint() if cp.has_checkpoint() else cfg.TRAIN.WEIGHTS
         )
-        start_step, bn_start_epoch, ft_start_epoch = _get_info_from_checkpoint4qat(
-            checkpoint_file
-        )
+        if cp.has_checkpoint():
+            start_step, bn_start_epoch, ft_start_epoch = _get_info_from_checkpoint4qat(
+                checkpoint_file
+            )
+        else:
+            start_step, bn_start_epoch, ft_start_epoch = "bn_stabilization", 0, 0
 
     teacher = None
     if str.lower(cfg.TRAIN.TEACHER) != "":
@@ -195,6 +208,8 @@ def train_qat_network():
         stabilize_opt = optim.construct_optimizer(model, train_params, False)
         if checkpoint_file:
             cp.load_checkpoint(checkpoint_file, model, ema, stabilize_opt)
+            _correct_zero_point(model)
+            _correct_zero_point(ema)
         _stabilize_bn(
             model,
             ema,
@@ -214,6 +229,8 @@ def train_qat_network():
     optimizer = optim.construct_optimizer(model, train_params)
     if start_step == "default":
         cp.load_checkpoint(checkpoint_file, model, ema, optimizer)
+        _correct_zero_point(model)
+        _correct_zero_point(ema)
     _run_qat_newtork(
         model,
         ema,

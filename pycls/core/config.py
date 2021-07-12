@@ -88,6 +88,12 @@ _C.QUANTIZATION.QAT.TRAIN_SHIFT_AVG_POOL = True
 # Enable bias quantization
 _C.QUANTIZATION.QAT.TRAIN_SHIFT_BIAS_QUANTIZATION = True
 
+# Act bitwidth
+_C.QUANTIZATION.QAT.ACT_BITWIDTH = 8
+
+# Weight bitwidth
+_C.QUANTIZATION.QAT.WEIGHT_BITWIDTH = 8
+
 # ---------------------------------- ResNet options ---------------------------------- #
 _C.RESNET = CfgNode()
 

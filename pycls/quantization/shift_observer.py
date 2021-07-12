@@ -32,7 +32,9 @@ class MinMaxShiftObserver(MinMaxObserver):
         x = x.to(self.min_val.dtype)
         min_val_cur, max_val_cur = torch._aminmax(x)
 
-        val = get_symmetric_shift_val(min_val_cur, max_val_cur)
+        val = get_symmetric_shift_val(
+            min_val_cur, max_val_cur, self.quant_max - self.quant_min
+        )
         min_val = torch.min(torch.tensor(-val), self.min_val)
         max_val = torch.max(torch.tensor(val), self.max_val)
 
@@ -77,7 +79,9 @@ class MovingAvgMinMaxShiftObserver(MinMaxObserver):
             self._max_val_raw = self._max_val_raw + self.averaging_constant * (
                 max_val_cur - self._max_val_raw
             )
-        val = get_symmetric_shift_val(self._min_val_raw, self._max_val_raw)
+        val = get_symmetric_shift_val(
+            self._min_val_raw, self._max_val_raw, self.quant_max - self.quant_min
+        )
         min_val = torch.min(torch.tensor(-val), self.min_val)
         max_val = torch.max(torch.tensor(val), self.max_val)
 
@@ -86,7 +90,7 @@ class MovingAvgMinMaxShiftObserver(MinMaxObserver):
         return x_orig
 
 
-class HistogramShiftObserver(HistogramObserver):
+class _HistogramObserver(HistogramObserver):
     def __init__(
         self,
         bins: int = 2048,
@@ -94,12 +98,51 @@ class HistogramShiftObserver(HistogramObserver):
         dtype: torch.dtype = torch.quint8,
         qscheme=torch.per_tensor_affine,
         reduce_range=False,
+        quant_min=None,
+        quant_max=None,
+        factory_kwargs=None,
+    ) -> None:
+        # bins: The number of bins used for histogram calculation.
+        super(HistogramObserver, self).__init__(
+            dtype=dtype,
+            qscheme=qscheme,
+            reduce_range=reduce_range,
+            quant_min=quant_min,
+            quant_max=quant_max,
+            factory_kwargs=factory_kwargs,
+        )
+        factory_kwargs = torch.nn.factory_kwargs(factory_kwargs)
+        self.bins = bins
+        self.register_buffer("histogram", torch.zeros(self.bins, **factory_kwargs))
+        self.register_buffer("min_val", torch.tensor(float("inf"), **factory_kwargs))
+        self.register_buffer("max_val", torch.tensor(float("-inf"), **factory_kwargs))
+        self.dst_nbins = 2 ** torch.iinfo(self.dtype).bits
+        self.upsample_rate = upsample_rate
+
+
+class HistogramShiftObserver(_HistogramObserver):
+    def __init__(
+        self,
+        bins: int = 2048,
+        upsample_rate: int = 128,
+        dtype: torch.dtype = torch.quint8,
+        qscheme=torch.per_tensor_affine,
+        reduce_range=False,
+        quant_min=None,
+        quant_max=None,
         factory_kwargs=None,
     ):
         if qscheme != torch.per_tensor_symmetric:
             raise NotImplemented("Currently only support for 'per_tensor_symetric'")
         super(HistogramShiftObserver, self).__init__(
-            bins, upsample_rate, dtype, qscheme, reduce_range, factory_kwargs
+            bins,
+            upsample_rate,
+            dtype,
+            qscheme,
+            reduce_range,
+            quant_min,
+            quant_max,
+            factory_kwargs,
         )
 
     def _get_norm(
@@ -129,7 +172,9 @@ class HistogramShiftObserver(HistogramObserver):
         if is_uninitialized or same_values:
             min_val_cur, max_val_cur = torch._aminmax(x)
 
-            val = get_symmetric_shift_val(min_val_cur, max_val_cur, False)
+            val = get_symmetric_shift_val(
+                min_val_cur, max_val_cur, self.quant_max - self.quant_min, False
+            )
             min_val = torch.min(torch.tensor(-val), self.min_val)
             max_val = torch.max(torch.tensor(val), self.max_val)
 
@@ -145,7 +190,9 @@ class HistogramShiftObserver(HistogramObserver):
             )
         else:
             new_min, new_max = torch._aminmax(x)
-            val = get_symmetric_shift_val(new_min, new_max, False)
+            val = get_symmetric_shift_val(
+                new_min, new_max, self.quant_max - self.quant_min, False
+            )
             new_min = torch.min(torch.tensor(-val), self.min_val)
             new_max = torch.max(torch.tensor(val), self.max_val)
 
@@ -209,15 +256,17 @@ class HistogramShiftObserver(HistogramObserver):
         return new_min, new_max
 
 
-def get_symmetric_shift_val(min_val_cur: int, max_val_cur: int, close_val: bool = True):
+def get_symmetric_shift_val(
+    min_val_cur: int, max_val_cur: int, num_bin: int, close_val: bool = True
+):
     max_abs = max(abs(min_val_cur), abs(max_val_cur))
     if max_abs != 0:
-        value = int(torch.floor(torch.log2(max_abs / 255)))
-        delta = abs(max_abs - 255 * (2 ** value))
-        while 255 * (2 ** value) < max_abs:
+        value = int(torch.floor(torch.log2(max_abs / num_bin)))
+        delta = abs(max_abs - num_bin * (2 ** value))
+        while num_bin * (2 ** value) < max_abs:
             value += 1
-            delta = abs(max_abs - 255 * (2 ** value))
-        if not close_val or delta > abs(max_abs - 255 * (2 ** (value + 1))):
+            delta = abs(max_abs - num_bin * (2 ** value))
+        if not close_val or delta > abs(max_abs - num_bin * (2 ** (value + 1))):
             value += 1
-        return 255 * (2 ** value)
+        return num_bin * (2 ** value)
     return 0

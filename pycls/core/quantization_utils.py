@@ -125,6 +125,7 @@ def model2cuda(model: Module):
 
 
 def _quantize_model4qat(model: Module, method: str):
+    import numpy as np
     from torch.quantization.quantization_mappings import get_default_qat_module_mappings
 
     quantized_model = QuantizedModel(model_fp32=model)
@@ -134,15 +135,15 @@ def _quantize_model4qat(model: Module, method: str):
         activation=ShiftFakeQuantize.with_args(
             observer=observer,
             quant_min=0,
-            quant_max=255,
+            quant_max=int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH) - 1),
             dtype=torch.quint8,
             qscheme=torch.per_tensor_symmetric,
             reduce_range=False,
         ),
         weight=ShiftFakeQuantize.with_args(
             observer=HistogramShiftObserver,
-            quant_min=-128,
-            quant_max=127,
+            quant_min=-int(np.exp2(cfg.QUANTIZATION.QAT.WEIGHT_BITWIDTH - 1)),
+            quant_max=int(np.exp2(cfg.QUANTIZATION.QAT.WEIGHT_BITWIDTH - 1) - 1),
             dtype=torch.qint8,
             qscheme=torch.per_tensor_symmetric,
             reduce_range=False,

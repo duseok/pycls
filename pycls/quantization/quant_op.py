@@ -1,5 +1,7 @@
+import numpy as np
 import torch
 import torch.nn.functional as F
+from pycls.core.config import cfg
 from torch.nn.qat import Conv2d, Linear
 
 
@@ -59,8 +61,8 @@ class QConv2d(Conv2d):
                 self.bias,
                 scale,
                 torch.tensor([0.0], device=self.bias.device),
-                -128,
-                127,
+                -int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1)),
+                int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1) - 1),
                 1.0,
             )
             # qbias = RoundQuant.apply(self.bias, scale)
@@ -101,8 +103,8 @@ class QLinear(Linear):
                 self.bias,
                 scale,
                 torch.tensor([0.0], device=self.bias.device),
-                -128,
-                127,
+                -int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1)),
+                int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1) - 1),
                 1.0,
             )
         return F.linear(input, qweight, qbias)
