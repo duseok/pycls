@@ -20,6 +20,7 @@ from pycls.core.quantization_utils import (
     quantize_network_for_qat,
     setup_model,
 )
+from pycls.quantization.quant_op import QConvBn2d
 from torch.optim.optimizer import Optimizer
 
 if TYPE_CHECKING:
@@ -149,6 +150,32 @@ def _correct_zero_point(module):
             _correct_zero_point(m)
 
 
+def _fuse_qat_model(module: Module):
+    swapped_module = {}
+    for n, m in module.named_children():
+        if isinstance(m, QConvBn2d):
+            swapped_module[n] = m.fuse_module()
+        else:
+            _fuse_qat_model(m)
+
+    for n, m in swapped_module.items():
+        module._modules[n] = m
+
+
+def _load_checkpoint(checkpoint_file, model, ema, opt):
+    cp.load_checkpoint(checkpoint_file, model, ema, opt)
+    model = net.unwrap_model(model)
+    ema = net.unwrap_model(ema)
+    _correct_zero_point(model)
+    _correct_zero_point(ema)
+    if cfg.QUANTIZATION.QAT.WITH_BN and cfg.QUANTIZATION.QAT.CONVERT_MODEL_WITHOUT_BN:
+        _fuse_qat_model(model)
+        _fuse_qat_model(ema)
+    model = model2cuda(model)
+    ema = model2cuda(ema)
+    return model, ema
+
+
 def train_qat_network():
     """Trains the quantized model. Most are copied from 'trainer.py.'"""
     # Setup training/testing environment
@@ -202,14 +229,13 @@ def train_qat_network():
 
     if cfg.QUANTIZATION.QAT.TRAIN_SHIFT_BIAS_QUANTIZATION:
         _enable_bias_quant(model)
+        _enable_bias_quant(ema)
 
     train_params = _categorize_params(model)
     if start_step == "bn_stabilization":
         stabilize_opt = optim.construct_optimizer(model, train_params, False)
         if checkpoint_file:
-            cp.load_checkpoint(checkpoint_file, model, ema, stabilize_opt)
-            _correct_zero_point(model)
-            _correct_zero_point(ema)
+            model, ema = _load_checkpoint(checkpoint_file, model, ema, stabilize_opt)
         _stabilize_bn(
             model,
             ema,
@@ -228,9 +254,7 @@ def train_qat_network():
     logger.info("Start finetuing (Epoch: {})".format(ft_start_epoch + 1))
     optimizer = optim.construct_optimizer(model, train_params)
     if start_step == "default":
-        cp.load_checkpoint(checkpoint_file, model, ema, optimizer)
-        _correct_zero_point(model)
-        _correct_zero_point(ema)
+        model, ema = _load_checkpoint(checkpoint_file, model, ema, optimizer)
     _run_qat_newtork(
         model,
         ema,

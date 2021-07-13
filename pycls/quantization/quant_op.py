@@ -1,8 +1,10 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torch.nn.intrinsic.qat as nniqat
 from pycls.core.config import cfg
 from torch.nn.qat import Conv2d, Linear
+from torch.quantization.quantize import register_activation_post_process_hook
 
 
 class ShiftScaleQuant(torch.autograd.Function):
@@ -13,6 +15,35 @@ class ShiftScaleQuant(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         return grad_output
+
+
+class QConvBn2d(nniqat.ConvBn2d):
+    def fuse_module(self):
+        from torch.quantization import fuse_conv_bn
+
+        self.eval()
+        fused_conv = fuse_conv_bn(self, self.bn)
+        qconv = QConv2d(
+            fused_conv.in_channels,
+            fused_conv.out_channels,
+            fused_conv.kernel_size,
+            fused_conv.stride,
+            fused_conv.padding,
+            fused_conv.dilation,
+            fused_conv.groups,
+            True,
+            fused_conv.padding_mode,
+            fused_conv.qconfig,
+            self.weight.device,
+        )
+        qconv.weight.data = fused_conv.weight.data
+        qconv.bias.data = fused_conv.bias.data
+        qconv.quant_bias = True
+        qconv.activation_post_process = self.activation_post_process
+        register_activation_post_process_hook(qconv)
+        del qconv.weight_fake_quant
+        qconv.weight_fake_quant = self.weight_fake_quant
+        return qconv
 
 
 class QConv2d(Conv2d):
@@ -65,7 +96,6 @@ class QConv2d(Conv2d):
                 int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1) - 1),
                 1.0,
             )
-            # qbias = RoundQuant.apply(self.bias, scale)
         return self._conv_forward(input, qweight, qbias)
 
 

@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from pycls.core.config import cfg
 from pycls.quantization.hw_quant_op import QuantOps
-from pycls.quantization.quant_op import QConv2d, QLinear
+from pycls.quantization.quant_op import QConv2d, QConvBn2d, QLinear
 from pycls.quantization.quantizer import QuantizedModel
 from pycls.quantization.shift_fake_quantizer import ShiftFakeQuantize
 from pycls.quantization.shift_observer import (
@@ -66,13 +66,17 @@ def _model_equivalence(
     return True
 
 
-def fuse_network(model: Module, debug=False):
+def fuse_network(model: Module, with_bn=False, debug=False):
     fused_model = deepcopy(model)
-    fused_model.eval()
-    model.eval()
+    if with_bn:
+        fused_model.train()
+    else:
+        fused_model.eval()
     fused_model.fuse_model(cfg.QUANTIZATION.ACT_FUSION)
     # Model and fused model should be equivalent.
     if debug:
+        model.eval()
+        fused_model.eval()
         assert _model_equivalence(
             model_1=model,
             model_2=fused_model,
@@ -126,6 +130,7 @@ def model2cuda(model: Module):
 
 def _quantize_model4qat(model: Module, method: str):
     import numpy as np
+    from torch.nn.intrinsic.modules.fused import ConvBn2d
     from torch.quantization.quantization_mappings import get_default_qat_module_mappings
 
     quantized_model = QuantizedModel(model_fp32=model)
@@ -154,6 +159,7 @@ def _quantize_model4qat(model: Module, method: str):
     mapping = get_default_qat_module_mappings()
     if cfg.QUANTIZATION.QAT.TRAIN_SHIFT_BIAS_QUANTIZATION:
         mapping[nn.Conv2d] = QConv2d
+        mapping[ConvBn2d] = QConvBn2d
         mapping[nn.Linear] = QLinear
 
     quantized_model = torch.quantization.prepare_qat(
@@ -174,7 +180,7 @@ def _copy_fake_quant(src: QuantizedModel, dest: QuantizedModel):
 
 def quantize_network_for_qat(model: Module):
     model.train()
-    model = fuse_network(model)
+    model = fuse_network(model, cfg.QUANTIZATION.QAT.WITH_BN)
 
     assert (
         len(cfg.QUANTIZATION.METHOD) == 1

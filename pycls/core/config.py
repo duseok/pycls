@@ -94,6 +94,12 @@ _C.QUANTIZATION.QAT.ACT_BITWIDTH = 8
 # Weight bitwidth
 _C.QUANTIZATION.QAT.WEIGHT_BITWIDTH = 8
 
+# QAT with BN
+_C.QUANTIZATION.QAT.WITH_BN = True
+
+# QAT model with BN -> QAT model without BN
+_C.QUANTIZATION.QAT.CONVERT_MODEL_WITHOUT_BN = False
+
 # ---------------------------------- ResNet options ---------------------------------- #
 _C.RESNET = CfgNode()
 

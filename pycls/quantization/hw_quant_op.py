@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pycls.core.config import cfg
-from pycls.quantization.quant_op import QConv2d, QLinear
+from pycls.quantization.quant_op import QConv2d, QConvBn2d, QLinear
 from torch.nn.modules.pooling import AdaptiveAvgPool2d, MaxPool2d
 from torch.nn.quantized.modules.functional_modules import FloatFunctional
 
@@ -69,6 +69,16 @@ class HWQConv2d(nn.Conv2d):
             int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1) - 1),
         )
         return midap_op
+
+
+class HWQConvBn2d(HWQConv2d):
+    @classmethod
+    def from_trained_op(cls, op):
+        from torch.quantization import fuse_conv_bn
+
+        op.eval()
+        conv = fuse_conv_bn(op, op.bn)
+        return HWQConv2d.from_trained_op(conv)
 
 
 class HWQLinear(nn.Linear):
@@ -162,6 +172,7 @@ def _get_shift_scale_value(s):
 
 QuantOps = {
     QConv2d: HWQConv2d,
+    QConvBn2d: HWQConvBn2d,
     MaxPool2d: HWQMaxPool2d,
     AdaptiveAvgPool2d: HWQAvgPool2d,
     FloatFunctional: HWQFunctional,
