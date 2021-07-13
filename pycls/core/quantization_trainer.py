@@ -168,7 +168,7 @@ def _load_checkpoint(checkpoint_file, model, ema, opt):
     ema = net.unwrap_model(ema)
     _correct_zero_point(model)
     _correct_zero_point(ema)
-    if cfg.QUANTIZATION.QAT.WITH_BN and cfg.QUANTIZATION.QAT.CONVERT_MODEL_WITHOUT_BN:
+    if cfg.QUANTIZATION.QAT.WITH_BN and cfg.QUANTIZATION.QAT.FOLDING_BN:
         _fuse_qat_model(model)
         _fuse_qat_model(ema)
     model = model2cuda(model)
@@ -215,6 +215,7 @@ def train_qat_network():
     teacher = None
     if str.lower(cfg.TRAIN.TEACHER) != "":
         teacher = _setup_teacher()
+        teacher.eval()
         _restore_cfg()
 
     # Create a GradScaler for mixed precision training
@@ -222,8 +223,7 @@ def train_qat_network():
 
     if not checkpoint_file:
         logger.info("Start Calibration")
-        cur_device = torch.cuda.current_device()
-        calibrate_model(model, train_loader, cur_device, 1000 / cfg.TRAIN.BATCH_SIZE)
+        calibrate_model(model, train_loader, stop_iter=(1000 / cfg.TRAIN.BATCH_SIZE))
     model.apply(torch.quantization.disable_observer)
     ema.apply(torch.quantization.disable_observer)
 

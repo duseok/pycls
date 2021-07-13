@@ -25,7 +25,7 @@ from pycls.core.quantization_utils import (
 )
 from pycls.quantization.hw_quant_op import QuantOps
 from pycls.quantization.quantizer import QuantizedModel
-from torch.quantization.observer import HistogramObserver
+from pycls.quantization.shift_observer import HistogramShiftObserver
 
 if TYPE_CHECKING:
     from torch.nn import Module
@@ -84,15 +84,23 @@ def _test_cpu_model_epoch(
 
 
 def _quantize_model4ptq(model: Module, loader: DataLoader, method: str):
+    import numpy as np
+
     quantized_model = QuantizedModel(model_fp32=model)
 
     observer = get_observer(method)
     quantization_config = torch.quantization.QConfig(
         activation=observer.with_args(
-            dtype=torch.quint8, qscheme=torch.per_tensor_symmetric
+            quant_min=0,
+            quant_max=int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH) - 1),
+            dtype=torch.quint8,
+            qscheme=torch.per_tensor_symmetric,
         ),
-        weight=HistogramObserver.with_args(
-            dtype=torch.qint8, qscheme=torch.per_tensor_symmetric
+        weight=HistogramShiftObserver.with_args(
+            quant_min=-int(np.exp2(cfg.QUANTIZATION.QAT.WEIGHT_BITWIDTH - 1)),
+            quant_max=int(np.exp2(cfg.QUANTIZATION.QAT.WEIGHT_BITWIDTH - 1) - 1),
+            dtype=torch.qint8,
+            qscheme=torch.per_tensor_symmetric,
         ),
     )
     quantized_model.qconfig = quantization_config
@@ -100,7 +108,7 @@ def _quantize_model4ptq(model: Module, loader: DataLoader, method: str):
     q_model = torch.quantization.quantize(
         model=quantized_model,
         run_fn=calibrate_model,
-        run_args=[loader],
+        run_args=[loader, False],
         mapping=None,
         inplace=False,
     )
