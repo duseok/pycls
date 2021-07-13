@@ -223,7 +223,8 @@ def train_qat_network():
 
     if not checkpoint_file:
         logger.info("Start Calibration")
-        calibrate_model(model, train_loader, stop_iter=(1000 / cfg.TRAIN.BATCH_SIZE))
+        calibration_loader = data_loader.construct_calibration_loader()
+        calibrate_model(model, calibration_loader)
     model.apply(torch.quantization.disable_observer)
     ema.apply(torch.quantization.disable_observer)
 

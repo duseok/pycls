@@ -89,16 +89,12 @@ def fuse_network(model: Module, with_bn=False, debug=False):
 
 
 @torch.no_grad()
-def calibrate_model(
-    model: QuantizedModel, loader: DataLoader, use_cuda=True, stop_iter=1000
-):
+def calibrate_model(model: QuantizedModel, loader: DataLoader, use_cuda=True):
     model.eval()
-    for idx, (inputs, _) in enumerate(loader):
+    for inputs, _ in loader:
         if use_cuda:
             inputs = inputs.cuda()
         _ = model(inputs)
-        if idx >= stop_iter:
-            break
 
 
 def setup_model():
