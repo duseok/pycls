@@ -140,14 +140,28 @@ def _enable_bias_quant(module):
             _enable_bias_quant(m)
 
 
-def _correct_zero_point(module):
+def _correct_quant_param(module):
+    import torch.nn.functional as F
     from pycls.quantization.shift_fake_quantizer import ShiftFakeQuantize
 
+    scale_ratio = 1
     for _, m in module.named_children():
         if isinstance(m, ShiftFakeQuantize) and m.zero_point != 0:
-            m.zero_point.copy_(torch.tensor([(m.quant_max + m.quant_min) // 2]))
-        else:
-            _correct_zero_point(m)
+            scale_ratio = 2 * (m.zero_point + 1) / (m.quant_max + 1)
+            break
+
+    for _, m in module.named_children():
+        if isinstance(m, ShiftFakeQuantize) and m.zero_point != 0 and scale_ratio != 1:
+            m.scale.data = torch.log(
+                torch.exp(F.softplus(m.scale.data) * scale_ratio) - 1
+            )
+            m.zero_point.copy_(torch.tensor([m.quant_max // 2]))
+        elif isinstance(m, ShiftFakeQuantize) and scale_ratio != 1:
+            m.scale.data = torch.log(
+                torch.exp(F.softplus(m.scale.data) * scale_ratio) - 1
+            )
+        if not isinstance(m, ShiftFakeQuantize):
+            _correct_quant_param(m)
 
 
 def _fuse_qat_model(module: Module):
@@ -166,8 +180,8 @@ def _load_checkpoint(checkpoint_file, model, ema, opt):
     cp.load_checkpoint(checkpoint_file, model, ema, opt)
     model = net.unwrap_model(model)
     ema = net.unwrap_model(ema)
-    _correct_zero_point(model)
-    _correct_zero_point(ema)
+    _correct_quant_param(model)
+    _correct_quant_param(ema)
     if cfg.QUANTIZATION.QAT.WITH_BN and cfg.QUANTIZATION.QAT.FOLDING_BN:
         _fuse_qat_model(model)
         _fuse_qat_model(ema)
