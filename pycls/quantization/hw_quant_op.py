@@ -148,6 +148,16 @@ class HWQFunctional(nn.Module):
         return midap_op
 
 
+class RoundQuant(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, t: Tensor):
+        return t.round_()
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output
+
+
 class HWQAvgPool2d(nn.Module):
     def __init__(self, *args, **kargs):
         super(HWQAvgPool2d, self).__init__(*args, **kargs)
@@ -156,7 +166,7 @@ class HWQAvgPool2d(nn.Module):
     def forward(self, x):
         y = torch.sum(x, (2, 3), keepdim=True)
         size = np.exp2(np.ceil(np.log2(x.shape[-1] * x.shape[-2])))
-        return _quant_tensor(y, size)
+        return RoundQuant.apply(y.div(size))
 
     @classmethod
     def from_trained_op(cls, op=None):
