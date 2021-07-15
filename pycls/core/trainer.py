@@ -7,14 +7,11 @@
 
 """Tools for training and testing a model."""
 
-import random
 from copy import deepcopy
 
-import numpy as np
 import pycls.core.benchmark as benchmark
 import pycls.core.builders as builders
 import pycls.core.checkpoint as cp
-import pycls.core.config as config
 import pycls.core.distributed as dist
 import pycls.core.logging as logging
 import pycls.core.meters as meters
@@ -24,57 +21,13 @@ import pycls.datasets.loader as data_loader
 import torch
 import torch.cuda.amp as amp
 from pycls.core.config import cfg
-from pycls.core.io import pathmgr
-
+from pycls.core.setup import restore_cfg, setup_env, setup_model, setup_teacher
 
 logger = logging.get_logger(__name__)
 
 
-def setup_env():
-    """Sets up environment for training or testing."""
-    if dist.is_master_proc():
-        # Ensure that the output dir exists
-        pathmgr.mkdirs(cfg.OUT_DIR)
-        # Save the config
-        config.dump_cfg()
-    # Setup logging
-    logging.setup_logging()
-    # Log torch, cuda, and cudnn versions
-    version = [torch.__version__, torch.version.cuda, torch.backends.cudnn.version()]
-    logger.info("PyTorch Version: torch={}, cuda={}, cudnn={}".format(*version))
-    # Log the config as both human readable and as a json
-    logger.info("Config:\n{}".format(cfg)) if cfg.VERBOSE else ()
-    logger.info(logging.dump_log_data(cfg, "cfg", None))
-    # Fix the RNG seeds (see RNG comment in core/config.py for discussion)
-    np.random.seed(cfg.RNG_SEED)
-    torch.manual_seed(cfg.RNG_SEED)
-    random.seed(cfg.RNG_SEED)
-    # Configure the CUDNN backend
-    torch.backends.cudnn.benchmark = cfg.CUDNN.BENCHMARK
-
-
-def setup_model():
-    """Sets up a model for training or testing and log the results."""
-    # Build the model
-    model = builders.build_model()
-    logger.info("Model:\n{}".format(model)) if cfg.VERBOSE else ()
-    # Log model complexity
-    logger.info(logging.dump_log_data(net.complexity(model), "complexity"))
-    # Transfer the model to the current GPU device
-    err_str = "Cannot use more GPU devices than available"
-    assert cfg.NUM_GPUS <= torch.cuda.device_count(), err_str
-    cur_device = torch.cuda.current_device()
-    model = model.cuda(device=cur_device)
-    # Use multi-process data parallel model in the multi-gpu setting
-    if cfg.NUM_GPUS > 1:
-        # Make model replica operate on the current device
-        ddp = torch.nn.parallel.DistributedDataParallel
-        model = ddp(module=model, device_ids=[cur_device], output_device=cur_device)
-    return model
-
-
 def get_kd_loss(output, output_t):
-    from torch.nn.functional import softmax, log_softmax
+    from torch.nn.functional import log_softmax, softmax
 
     return -1 * torch.mean(
         torch.sum(softmax(output_t, dim=1) * log_softmax(output, dim=1), dim=1)
@@ -186,6 +139,13 @@ def train_model():
     train_meter = meters.TrainMeter(len(train_loader))
     test_meter = meters.TestMeter(len(test_loader))
     ema_meter = meters.TestMeter(len(test_loader), "test_ema")
+
+    teacher = None
+    if str.lower(cfg.TRAIN.TEACHER) != "":
+        teacher = setup_teacher()
+        teacher.eval()
+        restore_cfg()
+
     # Create a GradScaler for mixed precision training
     scaler = amp.GradScaler(enabled=cfg.TRAIN.MIXED_PRECISION)
     # Compute model and loader timings
@@ -196,7 +156,7 @@ def train_model():
     for cur_epoch in range(start_epoch, cfg.OPTIM.MAX_EPOCH):
         # Train for one epoch
         params = (train_loader, model, ema, loss_fun, optimizer, scaler, train_meter)
-        train_epoch(*params, cur_epoch)
+        train_epoch(*params, cur_epoch, teacher)
         # Compute precise BN stats
         if cfg.BN.USE_PRECISE_STATS:
             net.compute_precise_bn_stats(model, train_loader)

@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pycls.core.checkpoint as cp
-import pycls.core.config as config
 import pycls.core.logging as logging
 import pycls.core.meters as meters
 import pycls.core.net as net
@@ -14,11 +13,13 @@ import torch
 import torch.cuda.amp as amp
 from pycls.core.config import cfg
 from pycls.core.io import pathmgr
-from pycls.core.quantization_utils import (
-    calibrate_model,
+from pycls.core.quantization_utils import calibrate_model, quantize_network_for_qat
+from pycls.core.setup import (
     model2cuda,
-    quantize_network_for_qat,
+    restore_cfg,
+    setup_env,
     setup_model,
+    setup_teacher,
 )
 from pycls.quantization.quant_op import QConvBn2d
 from torch.optim.optimizer import Optimizer
@@ -51,28 +52,6 @@ def _get_info_from_checkpoint4qat(file):
         step = "bn_stabilization"
 
     return step, bn_start_epoch, ft_start_epoch
-
-
-def _setup_teacher():
-    cfg.defrost()
-    config.load_cfg_fom_args(description="Teacher model", cfg_file=cfg.TRAIN.TEACHER)
-    config.assert_and_infer_cfg()
-    cfg.freeze()
-    teacher = setup_model()
-    assert cfg.TRAIN.TEACHER_WEIGHTS != ""
-    cp.load_checkpoint(cfg.TRAIN.TEACHER_WEIGHTS, teacher, None)
-    logger.info(
-        "Loaded initial teacher weights from: {}".format(cfg.TRAIN.TEACHER_WEIGHTS)
-    )
-    return model2cuda(teacher)
-
-
-def _restore_cfg():
-    cfg.defrost()
-    config.reset_cfg()
-    config.load_cfg_fom_args("Restore a network configuration.")
-    config.assert_and_infer_cfg()
-    cfg.freeze()
 
 
 def _categorize_params(model):
@@ -193,9 +172,9 @@ def _load_checkpoint(checkpoint_file, model, ema, opt):
 def train_qat_network():
     """Trains the quantized model. Most are copied from 'trainer.py.'"""
     # Setup training/testing environment
-    trainer.setup_env()
+    setup_env()
     # Construct the model, loss_fun, and optimizer
-    model = setup_model()
+    model = setup_model(False)
     # Load checkpoint or initial weights
     if cfg.QUANTIZATION.QAT.FP32_WEIGHTS:
         cp.load_checkpoint(cfg.QUANTIZATION.QAT.FP32_WEIGHTS, model, None)
@@ -228,9 +207,9 @@ def train_qat_network():
 
     teacher = None
     if str.lower(cfg.TRAIN.TEACHER) != "":
-        teacher = _setup_teacher()
+        teacher = setup_teacher()
         teacher.eval()
-        _restore_cfg()
+        restore_cfg()
 
     # Create a GradScaler for mixed precision training
     scaler = amp.GradScaler(enabled=cfg.TRAIN.MIXED_PRECISION)

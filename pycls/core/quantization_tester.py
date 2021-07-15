@@ -19,10 +19,9 @@ from pycls.core.quantization_utils import (
     calibrate_model,
     fuse_network,
     get_observer,
-    model2cuda,
     quantize_network_for_qat,
-    setup_model,
 )
+from pycls.core.setup import model2cuda, setup_env, setup_model
 from pycls.quantization.hw_quant_op import QuantOps
 from pycls.quantization.quantizer import QuantizedModel
 from pycls.quantization.shift_observer import HistogramShiftObserver
@@ -181,7 +180,7 @@ def test_quantized_model():
 def test_qat_network():
     """Trains the quantized model. Most are copied from 'trainer.py.'"""
     # Setup training/testing environment
-    trainer.setup_env()
+    setup_env()
     # Construct the model, loss_fun, and optimizer
     model = setup_model()
     # Create data loaders and meters
