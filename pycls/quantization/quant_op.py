@@ -18,6 +18,84 @@ class ShiftScaleQuant(torch.autograd.Function):
 
 
 class QConvBn2d(nniqat.ConvBn2d):
+    def __init__(
+        self,
+        # ConvNd args
+        in_channels,
+        out_channels,
+        kernel_size,
+        stride=1,
+        padding=0,
+        dilation=1,
+        groups=1,
+        bias=None,
+        padding_mode="zeros",
+        # BatchNorm2d args
+        # num_features: out_channels
+        eps=1e-05,
+        momentum=0.1,
+        # affine: True
+        # track_running_stats: True
+        # Args for this module
+        freeze_bn=False,
+        qconfig=None,
+    ):
+        super().__init__(
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride,
+            padding,
+            dilation,
+            groups,
+            bias,
+            padding_mode,
+            eps,
+            momentum,
+            freeze_bn,
+            qconfig,
+        )
+        self.quant_bias = False
+
+    def set_quant_bias(self, quant_bias):
+        self.quant_bias = quant_bias
+
+    def _forward(self, input):
+        assert self.bn.running_var is not None
+        running_std = torch.sqrt(self.bn.running_var + self.bn.eps)
+        scale_factor = self.bn.weight / running_std
+        weight_shape = [1] * len(self.weight.shape)
+        weight_shape[0] = -1
+        bias_shape = [1] * len(self.weight.shape)
+        bias_shape[1] = -1
+        scaled_weight = self.weight_fake_quant(
+            self.weight * scale_factor.reshape(weight_shape)
+        )
+        # using zero bias here since the bias for original conv
+        # will be added later
+        if self.bias is not None:
+            zero_bias = torch.zeros_like(self.bias)
+        else:
+            zero_bias = torch.zeros(self.out_channels, device=scaled_weight.device)
+        conv = self._conv_forward(input, scaled_weight, zero_bias)
+        conv_orig = conv / scale_factor.reshape(bias_shape)
+        qbias = self.bias
+        if self.bias is not None and self.quant_bias:
+            scale = ShiftScaleQuant.apply(
+                F.softplus(self.activation_post_process.scale)
+            )
+            qbias = torch._fake_quantize_learnable_per_tensor_affine(
+                self.bias,
+                scale,
+                torch.tensor([0.0], device=self.bias.device),
+                -int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1)),
+                int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1) - 1),
+                1.0,
+            )
+            conv_orig = conv_orig + qbias.reshape(bias_shape)
+        conv = self.bn(conv_orig)
+        return conv
+
     def fuse_module(self):
         from torch.quantization import fuse_conv_bn
 
