@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pycls.core.config import cfg
 from pycls.quantization.quant_op import QConv2d, QConvBn2d, QLinear
+from torch.functional import Tensor
 from torch.nn.modules.pooling import AdaptiveAvgPool2d, MaxPool2d
 from torch.nn.quantized.modules.functional_modules import FloatFunctional
 
@@ -14,8 +15,7 @@ class Quantizer(nn.Module):
     def forward(self, input, bq, s):
         x = input.div(s).round_()
         if bq is not None:
-            _bq = bq.div(s).round_()
-            x = x + _bq
+            x = x + bq
         out = x.clamp(
             min=-int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1)),
             max=int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1) - 1),
@@ -61,12 +61,15 @@ class HWQConv2d(nn.Conv2d):
             -int(np.exp2(cfg.QUANTIZATION.QAT.WEIGHT_BITWIDTH - 1)),
             int(np.exp2(cfg.QUANTIZATION.QAT.WEIGHT_BITWIDTH - 1) - 1),
         )
-        midap_op.bias.data = torch.fake_quantize_per_tensor_affine(
-            op.bias.reshape(op.out_channels, 1, 1),
-            float(act_scale),
-            0,
-            -int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1)),
-            int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1) - 1),
+        midap_op.bias.data = _quant_tensor(
+            torch.fake_quantize_per_tensor_affine(
+                op.bias.reshape(op.out_channels, 1, 1),
+                float(act_scale),
+                0,
+                -int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1)),
+                int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1) - 1),
+            ).cuda(),
+            act_scale,
         )
         return midap_op
 
@@ -107,12 +110,15 @@ class HWQLinear(nn.Linear):
             -int(np.exp2(cfg.QUANTIZATION.QAT.WEIGHT_BITWIDTH - 1)),
             int(np.exp2(cfg.QUANTIZATION.QAT.WEIGHT_BITWIDTH - 1) - 1),
         )
-        midap_op.bias.data = torch.fake_quantize_per_tensor_affine(
-            op.bias,
-            float(act_scale),
-            0,
-            -int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1)),
-            int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1) - 1),
+        midap_op.bias.data = _quant_tensor(
+            torch.fake_quantize_per_tensor_affine(
+                op.bias,
+                float(act_scale),
+                0,
+                -int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1)),
+                int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1) - 1),
+            ).cuda(),
+            act_scale,
         )
         return midap_op
 
@@ -150,7 +156,7 @@ class HWQAvgPool2d(nn.Module):
     def forward(self, x):
         y = torch.sum(x, (2, 3), keepdim=True)
         size = np.exp2(np.ceil(np.log2(x.shape[-1] * x.shape[-2])))
-        return y.div_(size)
+        return _quant_tensor(y, size)
 
     @classmethod
     def from_trained_op(cls, op=None):
@@ -168,6 +174,10 @@ class HWQMaxPool2d(nn.MaxPool2d):
 
 def _get_shift_scale_value(s):
     return torch.exp2(torch.log2(F.softplus(s)).round_()).cuda()
+
+
+def _quant_tensor(t: Tensor, s):
+    return t.div_(s).round_()
 
 
 QuantOps = {
