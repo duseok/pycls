@@ -37,21 +37,17 @@ def _get_info_from_checkpoint4qat(file):
     with pathmgr.open(file, "rb") as f:
         checkpoint = torch.load(f, map_location="cpu")
 
-    bn_start_epoch, ft_start_epoch = 0, 0
     if "step" in checkpoint:
         step = checkpoint["step"]
         start_epoch = checkpoint["epoch"] + 1
-        if step == "bn_stabilization":
-            bn_start_epoch = start_epoch
-        else:
-            ft_start_epoch = start_epoch
     else:
         logger.warning(
             f"This checkpoint does not contain 'step.' Load weights and start from stabilizing BN."
         )
-        step = "bn_stabilization"
+        step = "1_bn_stabilization"
+        start_epoch = 0
 
-    return step, bn_start_epoch, ft_start_epoch
+    return step, start_epoch
 
 
 def _categorize_params(model):
@@ -83,13 +79,13 @@ def _stabilize_bn(
     train_meter: meters.TrainMeter,
     test_meter: meters.TrainMeter,
     ema_meter: meters.TrainMeter,
+    prefix: str,
 ):
     max_finetune_epoch = cfg.OPTIM.MAX_EPOCH
     cfg.defrost()
     cfg.OPTIM.MAX_EPOCH = cfg.QUANTIZATION.QAT.BN_STABILIZATION_EPOCH
     cfg.freeze()
-    logger.info("Start BN stabilization (Epoch: {})".format(start_epoch + 1))
-    _run_qat_newtork(
+    _train_qat_newtork(
         model,
         ema,
         teacher,
@@ -102,7 +98,7 @@ def _stabilize_bn(
         train_meter,
         test_meter,
         ema_meter,
-        prefix="bn_stabilization_",
+        prefix=prefix,
     )
     cfg.defrost()
     cfg.OPTIM.MAX_EPOCH = max_finetune_epoch
@@ -191,19 +187,15 @@ def train_qat_network():
     ema_meter = meters.TestMeter(len(test_loader), "test_ema")
 
     model, ema, loss_fun = quantize_network_for_qat(model)
-    bn_start_epoch, ft_start_epoch = 0, 0
-    start_step = "bn_stabilization"
+    start_epoch = 0
+    start_step = "1_bn_stabilization"
     checkpoint_file = None
-    if cp.has_checkpoint() or cfg.TRAIN.WEIGHTS:
-        checkpoint_file = (
-            cp.get_last_checkpoint() if cp.has_checkpoint() else cfg.TRAIN.WEIGHTS
-        )
-        if cp.has_checkpoint():
-            start_step, bn_start_epoch, ft_start_epoch = _get_info_from_checkpoint4qat(
-                checkpoint_file
-            )
-        else:
-            start_step, bn_start_epoch, ft_start_epoch = "bn_stabilization", 0, 0
+    if cp.has_checkpoint():
+        checkpoint_file = cp.get_last_checkpoint()
+        start_step, start_epoch = _get_info_from_checkpoint4qat(checkpoint_file)
+    elif cfg.TRAIN.WEIGHTS:
+        checkpoint_file = cfg.TRAIN.WEIGHTS
+        start_step, start_epoch = "1_bn_stabilization", 0
 
     teacher = None
     if str.lower(cfg.TRAIN.TEACHER) != "":
@@ -225,16 +217,50 @@ def train_qat_network():
         _enable_bias_quant(model)
         _enable_bias_quant(ema)
 
+    _run_qat_newtork(
+        model,
+        ema,
+        teacher,
+        start_step,
+        start_epoch,
+        train_loader,
+        test_loader,
+        loss_fun,
+        scaler,
+        train_meter,
+        test_meter,
+        ema_meter,
+        checkpoint_file,
+    )
+
+
+def _run_qat_newtork(
+    model: Module,
+    ema: Module,
+    teacher: Module,
+    start_step: str,
+    start_epoch: int,
+    train_loader: DataLoader,
+    test_loader: DataLoader,
+    loss_fun: Module,
+    scaler: amp.GradScaler,
+    train_meter: meters.TrainMeter,
+    test_meter: meters.TrainMeter,
+    ema_meter: meters.TrainMeter,
+    checkpoint_file: str,
+):
     train_params = _categorize_params(model)
-    if start_step == "bn_stabilization":
+    step = start_step
+    if step == "1_bn_stabilization":
         stabilize_opt = optim.construct_optimizer(model, train_params, False)
         if checkpoint_file:
             model, ema = _load_checkpoint(checkpoint_file, model, ema, stabilize_opt)
+        logger.info("Start first BN stabilization (Epoch: {})".format(start_epoch + 1))
         _stabilize_bn(
             model,
             ema,
             teacher,
-            bn_start_epoch,
+            start_epoch,
             train_loader,
             test_loader,
             loss_fun,
@@ -243,30 +269,58 @@ def train_qat_network():
             train_meter,
             test_meter,
             ema_meter,
+            prefix="1_bn_stabilization_",
+        )
+        start_epoch = 0
+        step = "2_finetune"
+
+    if step == "2_finetune":
+        optimizer = optim.construct_optimizer(model, train_params)
+        if start_step == "2_finetune" and checkpoint_file:
+            model, ema = _load_checkpoint(checkpoint_file, model, ema, optimizer)
+        logger.info("Start finetuing (Epoch: {})".format(start_epoch + 1))
+        _train_qat_newtork(
+            model,
+            ema,
+            teacher,
+            start_epoch,
+            train_loader,
+            test_loader,
+            loss_fun,
+            optimizer,
+            scaler,
+            train_meter,
+            test_meter,
+            ema_meter,
+            bn_freeze=(cfg.QUANTIZATION.QAT.BN_TRAIN_EPOCH != -1),
+            prefix="2_finetune_",
+        )
+        start_epoch = 0
+        step = "3_bn_stabilization"
+
+    if step == "3_bn_stabilization":
+        stabilize_opt = optim.construct_optimizer(model, train_params, False)
+        if start_step == "3_bn_stabilization" and checkpoint_file:
+            model, ema = _load_checkpoint(checkpoint_file, model, ema, stabilize_opt)
+        logger.info("Start second BN stabilization (Epoch: {})".format(start_epoch + 1))
+        _stabilize_bn(
+            model,
+            ema,
+            teacher,
+            start_epoch,
+            train_loader,
+            test_loader,
+            loss_fun,
+            stabilize_opt,
+            scaler,
+            train_meter,
+            test_meter,
+            ema_meter,
+            prefix="3_bn_stabilization_",
         )
 
-    logger.info("Start finetuing (Epoch: {})".format(ft_start_epoch + 1))
-    optimizer = optim.construct_optimizer(model, train_params)
-    if start_step == "default":
-        model, ema = _load_checkpoint(checkpoint_file, model, ema, optimizer)
-    _run_qat_newtork(
-        model,
-        ema,
-        teacher,
-        ft_start_epoch,
-        train_loader,
-        test_loader,
-        loss_fun,
-        optimizer,
-        scaler,
-        train_meter,
-        test_meter,
-        ema_meter,
-        bn_freeze=(cfg.QUANTIZATION.QAT.BN_TRAIN_EPOCH != -1),
-    )
 
-
-def _run_qat_newtork(
+def _train_qat_newtork(
     model: Module,
     ema: Module,
     teacher: Module,
