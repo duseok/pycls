@@ -82,8 +82,10 @@ def _stabilize_bn(
     prefix: str,
 ):
     max_finetune_epoch = cfg.OPTIM.MAX_EPOCH
+    warmup_epochs = cfg.OPTIM.WARMUP_EPOCHS
     cfg.defrost()
     cfg.OPTIM.MAX_EPOCH = cfg.QUANTIZATION.QAT.BN_STABILIZATION_EPOCH
+    cfg.OPTIM.WARMUP_EPOCHS = cfg.QUANTIZATION.QAT.BN_STAB_WARMUP_EPOCH
     cfg.freeze()
     _train_qat_newtork(
         model,
@@ -102,6 +104,7 @@ def _stabilize_bn(
     )
     cfg.defrost()
     cfg.OPTIM.MAX_EPOCH = max_finetune_epoch
+    cfg.OPTIM.WARMUP_EPOCHS = warmup_epochs
     cfg.freeze()
 
 

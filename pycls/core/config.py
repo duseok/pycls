@@ -79,6 +79,9 @@ _C.QUANTIZATION.QAT.BN_TRAIN_EPOCH = -1
 # Number of epochs for stabilizing BN
 _C.QUANTIZATION.QAT.BN_STABILIZATION_EPOCH = 0
 
+# Number of warm up epochs for stabilizing BN
+_C.QUANTIZATION.QAT.BN_STAB_WARMUP_EPOCH = 0
+
 # Same scale value for skip connection
 _C.QUANTIZATION.QAT.TRAIN_SAME_SCALE4SKIP = True
 
