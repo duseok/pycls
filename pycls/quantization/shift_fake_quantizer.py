@@ -32,6 +32,7 @@ class FakeQuantFunc(torch.autograd.Function):
 class ShiftFakeQuantize(FakeQuantizeBase):
     scale: Parameter
     zero_point: torch.Tensor
+    bitwidth: torch.Tensor
 
     def __init__(self, observer, quant_min=0, quant_max=255, **observer_kwargs):
         super().__init__()
@@ -48,6 +49,10 @@ class ShiftFakeQuantize(FakeQuantizeBase):
         ), "quant_max out of bound"
         self.scale = Parameter(torch.tensor([np.log(np.exp(1) - 1)], dtype=torch.float))
         self.register_buffer("zero_point", torch.tensor([0.0]))
+        self.register_buffer(
+            "bitwidth",
+            torch.tensor([np.log2(quant_max - quant_min + 1)], dtype=torch.int),
+        )
         self.dtype = self.activation_post_process.dtype
         self.qscheme = self.activation_post_process.qscheme
 
@@ -102,6 +107,7 @@ class ShiftFakeQuantize(FakeQuantizeBase):
         )
         destination[prefix + "scale"] = self.scale.data
         destination[prefix + "zero_point"] = self.zero_point
+        destination[prefix + "bitwidth"] = self.bitwidth
 
     def _load_from_state_dict(
         self,
@@ -115,7 +121,7 @@ class ShiftFakeQuantize(FakeQuantizeBase):
     ):
         # Removing this function throws an error that the the size of the loaded tensor does not match the original size
         # i.e., These buffers start out with numel 0 and become numel 1 once they have their first forward pass.
-        local_state = ["scale", "zero_point"]
+        local_state = ["scale", "zero_point", "bitwidth"]
         for name in local_state:
             key = prefix + name
             if key in state_dict:
@@ -131,9 +137,11 @@ class ShiftFakeQuantize(FakeQuantizeBase):
                 if torch.jit.is_scripting():
                     if name == "scale":
                         self.scale.data.fill_(val)
-                    else:
-                        assert name == "zero_point"
+                    elif name == "zero_point":
                         self.zero_point.copy_(val)
+                    else:
+                        assert name == "bitwidth"
+                        self.bitwidth.copy_(val)
             elif strict:
                 missing_keys.append(key)
         super(ShiftFakeQuantize, self)._load_from_state_dict(
