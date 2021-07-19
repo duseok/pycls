@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
+from pycls.core.config import cfg
 from torch.nn.parameter import Parameter
 from torch.quantization.fake_quantize import FakeQuantizeBase
 
@@ -13,6 +14,19 @@ class ShiftScaleQuant(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         return grad_output
+
+
+class FakeQuantFunc(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, quant_x: torch.Tensor):
+        ctx.save_for_backward(x - quant_x)
+        return quant_x.clone().detach_()
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        diff = ctx.saved_tensors[0]
+        grad = 2 * diff.div_(diff.numel())
+        return grad, grad_output
 
 
 class ShiftFakeQuantize(FakeQuantizeBase):
@@ -51,10 +65,12 @@ class ShiftFakeQuantize(FakeQuantizeBase):
 
         if self.fake_quant_enabled[0] == 1:
             s = ShiftScaleQuant.apply(F.softplus(self.scale))
-            X = torch._fake_quantize_learnable_per_tensor_affine(
+            Y = torch._fake_quantize_learnable_per_tensor_affine(
                 X, s, self.zero_point, self.quant_min, self.quant_max, 1.0
             )
-        return X
+            if cfg.QUANTIZATION.QAT.ENABLE_QUANTIZATION_LOSS:
+                Y = FakeQuantFunc.apply(X, Y)
+        return Y
 
     @torch.jit.export
     def calculate_qparams(self):

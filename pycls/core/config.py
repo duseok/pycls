@@ -100,6 +100,9 @@ _C.QUANTIZATION.QAT.WITH_BN = True
 # QAT model with BN -> QAT model without BN
 _C.QUANTIZATION.QAT.FOLDING_BN = False
 
+# Use MSE loss between float tensor and quantized tensor
+_C.QUANTIZATION.QAT.ENABLE_QUANTIZATION_LOSS = False
+
 # ---------------------------------- ResNet options ---------------------------------- #
 _C.RESNET = CfgNode()
 
