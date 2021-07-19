@@ -12,6 +12,7 @@ from pycls.models.blocks import (
     linear_cx,
     norm2d,
     norm2d_cx,
+    hswish,
 )
 from torch.nn import Dropout, Module
 from torch.nn.quantized import FloatFunctional
@@ -19,13 +20,13 @@ from torch.quantization import fuse_modules
 
 
 class StemImageNet(Module):
-    """MobileNetV3 stem for ImageNet: 3x3, BN, AF(RELU6)."""
+    """MobileNetV3 stem for ImageNet: 3x3, BN, AF(Hswish)."""
 
     def __init__(self, w_in, w_out):
         super(StemImageNet, self).__init__()
         self.conv = conv2d(w_in, w_out, 3, stride=2)
         self.bn = norm2d(w_out)
-        self.af = activation()
+        self.af = hswish(w_in)
 
     def forward(self, x):
         for layer in self.children():
@@ -174,7 +175,7 @@ class MNV3Head(Module):
 
 
 class MobileNetV3(Module):
-    """"MobileNetV2 model."""
+    """"MobileNetV3 model."""
 
     @staticmethod
     def get_params():
@@ -194,6 +195,7 @@ class MobileNetV3(Module):
         vs = ["sw", "ds", "ws", "exp_rs", "ss", "hw", "nc"]
         sw, ds, ws, exp_rs, ss, hw, nc = [p[v] for v in vs]
         stage_params = list(zip(ds, ws, exp_rs, ss))
+        # sw = 16
         self.stem = StemImageNet(3, sw)
         prev_w = sw
         for i, (d, w, exp_r, stride) in enumerate(stage_params):
