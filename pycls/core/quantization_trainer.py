@@ -122,22 +122,29 @@ def _correct_quant_param(module):
     import torch.nn.functional as F
     from pycls.quantization.shift_fake_quantizer import ShiftFakeQuantize
 
-    scale_ratio = 1
-    for _, m in module.named_children():
-        if isinstance(m, ShiftFakeQuantize) and m.zero_point != 0:
-            scale_ratio = 2 * (m.zero_point + 1) / (m.quant_max + 1)
-            break
+    act_bitwidth = cfg.QUANTIZATION.QAT.ACT_BITWIDTH
+    weight_bitwidth = cfg.QUANTIZATION.QAT.WEIGHT_BITWIDTH
+
+    def _correct(s, orig_w, new_w):
+        return torch.log(torch.exp(F.softplus(s) * torch.exp2(orig_w - new_w)) - 1)
 
     for _, m in module.named_children():
-        if isinstance(m, ShiftFakeQuantize) and m.zero_point != 0 and scale_ratio != 1:
-            m.scale.data = torch.log(
-                torch.exp(F.softplus(m.scale.data) * scale_ratio) - 1
-            )
+        if (
+            isinstance(m, ShiftFakeQuantize)
+            and m.zero_point == 0
+            and m.bitwidth != weight_bitwidth
+        ):
+            m.scale.data = _correct(m.scale.data, m.bitwidth, weight_bitwidth)
+            m.bitwidth.copy_(torch.tensor([weight_bitwidth]))
+        elif (
+            isinstance(m, ShiftFakeQuantize)
+            and m.zero_point != 0
+            and m.bitwidth != act_bitwidth
+        ):
+            m.scale.data = _correct(m.scale.data, m.bitwidth, act_bitwidth)
             m.zero_point.copy_(torch.tensor([m.quant_max // 2]))
-        elif isinstance(m, ShiftFakeQuantize) and scale_ratio != 1:
-            m.scale.data = torch.log(
-                torch.exp(F.softplus(m.scale.data) * scale_ratio) - 1
-            )
+            m.bitwidth.copy_(torch.tensor([act_bitwidth]))
+
         if not isinstance(m, ShiftFakeQuantize):
             _correct_quant_param(m)
 
