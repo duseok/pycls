@@ -109,7 +109,7 @@ class MBConv(Module):
 class MNV3Stage(Module):
     """MobileNetV3 stage."""
 
-    def __init__(self, w_in, exp_r, stride, w_out, d):
+    def __init__(self, w_in, exp_r, stride, w_out, d, nl):
         super(MNV3Stage, self).__init__()
 
         for i in range(d):  # d는 layer의 반복 횟수
@@ -195,14 +195,13 @@ class MobileNetV3(Module):
         p = MobileNetV3.get_params() if not params else params
         p["nl"] = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
         vs = ["sw", "ds", "ws", "exp_rs", "ss", "hw", "nc", "nl"]
-
         sw, ds, ws, exp_rs, ss, hw, nc, nl = [p[v] for v in vs]
-        stage_params = list(zip(ds, ws, exp_rs, ss))
+        stage_params = list(zip(ds, ws, exp_rs, ss, nl))
         # sw = 16
         self.stem = StemImageNet(3, sw)
         prev_w = sw
-        for i, (d, w, exp_r, stride) in enumerate(stage_params):
-            stage = MNV3Stage(prev_w, exp_r, stride, w, d)
+        for i, (d, w, exp_r, stride, nl) in enumerate(stage_params):
+            stage = MNV3Stage(prev_w, exp_r, stride, w, d, nl)
             self.add_module("s{}".format(i + 1), stage)
             prev_w = w
         self.head = MNV3Head(prev_w, hw, nc)
@@ -217,7 +216,8 @@ class MobileNetV3(Module):
     def complexity(cx, params=None):
         """Computes model complexity (if you alter the model, make sure to update)."""
         p = MobileNetV3.get_params() if not params else params
-        vs = ["sw", "ds", "ws", "exp_rs", "ss", "hw", "nc"]
+        p["nl"] = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+        vs = ["sw", "ds", "ws", "exp_rs", "ss", "hw", "nc", "nl"]
         sw, ds, ws, exp_rs, ss, hw, nc = [p[v] for v in vs]
         stage_params = list(zip(ds, ws, exp_rs, ss))
         cx = StemImageNet.complexity(cx, 3, sw)

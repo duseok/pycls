@@ -14,10 +14,11 @@ from pycls.models.effnet import EffNet
 from pycls.models.regnet import RegNet
 from pycls.models.resnet import ResNet
 from pycls.models.mobilenetv2 import MobileNetV2
+from pycls.models.MobileNetV3 import MobileNetV3
 
 
 # Supported models
-_models = {"anynet": AnyNet, "effnet": EffNet, "resnet": ResNet, "regnet": RegNet, "mobilenetv2": MobileNetV2}
+_models = {"anynet": AnyNet, "effnet": EffNet, "resnet": ResNet, "regnet": RegNet, "mobilenetv2": MobileNetV2, "mobilenetv3": MobileNetV3}
 
 # Supported loss functions
 _loss_funs = {"cross_entropy": SoftCrossEntropyLoss}
