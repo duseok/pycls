@@ -47,7 +47,7 @@ class StemImageNet(Module):
 class MBConv(Module):
     """MobileNetV3 inverted bottleneck block"""
 
-    def __init__(self, w_in, exp_r, stride, w_out):
+    def __init__(self, w_in, exp_r, stride, w_out, nl):
         # Expansion, 3x3 depthwise, BN, AF, 1x1 pointwise, BN, skip_connection
         super(MBConv, self).__init__()
         self.stride = stride
@@ -57,11 +57,17 @@ class MBConv(Module):
         if w_exp != w_in:  # skip if exp_r is 1
             self.exp = conv2d(w_in, w_exp, 1)
             self.exp_bn = norm2d(w_exp)
-            self.exp_af = activation()
+            if nl == 1:
+                self.exp_af = hswish(w_in)
+            else:
+                self.exp_af = activation()
         # depthwise
         self.dwise = conv2d(w_exp, w_exp, 3, stride=stride, groups=w_exp)
         self.dwise_bn = norm2d(w_exp)
-        self.dwise_af = activation()
+        if nl == 1:
+            self.exp_af = hswish(w_in)
+        else:
+            self.dwise_af = activation()
         # pointwise
         self.lin_proj = conv2d(w_exp, w_out, 1)
         self.lin_proj_bn = norm2d(w_out)
@@ -114,7 +120,7 @@ class MNV3Stage(Module):
 
         for i in range(d):  # d는 layer의 반복 횟수
             stride = stride if i == 0 else 1
-            block = MBConv(w_in, exp_r, stride, w_out)
+            block = MBConv(w_in, exp_r, stride, w_out, nl)
             self.add_module("b{}".format(i + 1), block)
             stride, w_in = 1, w_out
 
@@ -145,7 +151,7 @@ class MNV3Head(Module):
         dropout_ratio = cfg.MNV2.DROPOUT_RATIO
         self.conv = conv2d(w_in, w_out, 1)
         self.conv_bn = norm2d(w_out)
-        self.conv_af = activation()
+        self.conv_af = hswish(w_in)
         self.avg_pool = gap2d(w_out)
         # classifier
         self.dropout = Dropout(p=dropout_ratio) if dropout_ratio > 0 else None
@@ -154,6 +160,7 @@ class MNV3Head(Module):
     def forward(self, x):
         x = self.conv_af(self.conv_bn(self.conv(x)))
         x = self.avg_pool(x)
+        x = self.conv_af(self.conv_bn(self.conv(x)))
         x = self.conv_af(self.conv_bn(self.conv(x)))
         x = x.view(x.size(0), -1)
         x = self.dropout(x) if self.dropout else x
@@ -218,7 +225,7 @@ class MobileNetV3(Module):
         p = MobileNetV3.get_params() if not params else params
         p["nl"] = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
         vs = ["sw", "ds", "ws", "exp_rs", "ss", "hw", "nc", "nl"]
-        sw, ds, ws, exp_rs, ss, hw, nc = [p[v] for v in vs]
+        sw, ds, ws, exp_rs, ss, hw, nc, nl = [p[v] for v in vs]
         stage_params = list(zip(ds, ws, exp_rs, ss))
         cx = StemImageNet.complexity(cx, 3, sw)
         prev_w = sw

@@ -18,7 +18,8 @@ from torch.quantization import fuse_modules
 # ----------------------- Shortcuts for common torch.nn layers ----------------------- #
 
 def hswish(w_in):
-    return w_in * nn.Relu6(x + 3.) / 6.
+    # return w_in * nn.ReLU6(w_in + 3.) / 6.
+    return np.float32(w_in) * nn.ReLU6(w_in + np.float32(3)) * np.float32(1. / 6.)
 
 def conv2d(w_in, w_out, k, *, stride=1, groups=1, bias=False):
     """Helper for building a conv2d layer."""
