@@ -154,6 +154,7 @@ class MNV3Head(Module):
     def forward(self, x):
         x = self.conv_af(self.conv_bn(self.conv(x)))
         x = self.avg_pool(x)
+        x = self.conv_af(self.conv_bn(self.conv(x)))
         x = x.view(x.size(0), -1)
         x = self.dropout(x) if self.dropout else x
         x = self.fc(x)
@@ -192,8 +193,10 @@ class MobileNetV3(Module):
     def __init__(self, params=None):
         super(MobileNetV3, self).__init__()
         p = MobileNetV3.get_params() if not params else params
-        vs = ["sw", "ds", "ws", "exp_rs", "ss", "hw", "nc"]
-        sw, ds, ws, exp_rs, ss, hw, nc = [p[v] for v in vs]
+        p["nl"] = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+        vs = ["sw", "ds", "ws", "exp_rs", "ss", "hw", "nc", "nl"]
+
+        sw, ds, ws, exp_rs, ss, hw, nc, nl = [p[v] for v in vs]
         stage_params = list(zip(ds, ws, exp_rs, ss))
         # sw = 16
         self.stem = StemImageNet(3, sw)
