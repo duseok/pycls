@@ -109,7 +109,7 @@ class MNV3Stage(Module):
 
     def __init__(self, w_in, exp_s, stride, w_out, nl, se):
         super(MNV3Stage, self).__init__()
-        stride = stride if i == 0 else 1
+        stride = stride
         block = MBConv(w_in, exp_s, stride, w_out, nl, se)
         self.add_module("b{}".format(i + 1), block)
         stride, w_in = 1, w_out
@@ -120,12 +120,11 @@ class MNV3Stage(Module):
         return x
 
     @staticmethod
-    def complexity(cx, w_in, exp_r, stride, w_out, d):
-        for i in range(d):
-            stride = stride if i == 0 else 1
-            cx = MBConv.complexity(cx, w_in, exp_r, stride, w_out)
-            stride, w_in = 1, w_out
-            return cx
+    def complexity(cx, w_in, exp_r, stride, w_out):
+        stride = stride
+        cx = MBConv.complexity(cx, w_in, exp_r, stride, w_out)
+        stride, w_in = 1, w_out
+        return cx
 
     def fuse_model(self, include_relu: bool):
         for m in self.modules():
