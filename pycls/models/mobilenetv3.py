@@ -162,16 +162,18 @@ class MNV3Head(Module):
         self.conv_af = activation()
         self.avg_pool = gap2d(w_out)
         # classifier
+        self.fc1 = linear(w_out, w_out, bias = True)
         self.dropout = Dropout(p=dropout_ratio) if dropout_ratio > 0 else None
-        self.fc = linear(w_out, num_classes, bias=True)
+        self.fc2 = linear(w_out, num_classes, bias=True)
 
     def forward(self, x):
         x = self.conv_af(self.conv_bn(self.conv(x)))
         x = self.avg_pool(x)
-        x = self.conv_af(self.conv(x))
         x = x.view(x.size(0), -1)
+        x = self.fc1(x)
+        x = self.conv_af(x)
         x = self.dropout(x) if self.dropout else x
-        x = self.fc(x)
+        x = self.fc2(x)
         return x
 
     @staticmethod
