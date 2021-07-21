@@ -51,17 +51,17 @@ class MBConv(Module):
         self.stride = stride
         assert stride in [1, 2]  # stride must be 1 or 2
         self.exp = None
-        w_exp = int(w_in * exp_r)  # expand channel using expansion factor(exp_r)
-        if w_exp != w_in:  # skip if exp_r is 1
-            self.exp = conv2d(w_in, w_exp, 1)
-            self.exp_bn = norm2d(w_exp)
+        # w_exp = int(w_in * exp_r)  # expand channel using expansion factor(exp_r)
+        if exp_s != w_in:  # skip if exp_r is 1
+            self.exp = conv2d(w_in, exp_s, 1)
+            self.exp_bn = norm2d(exp_s)
             self.exp_af = activation(nl)
         # depthwise
-        self.dwise = conv2d(w_exp, w_exp, 3, stride=stride, groups=w_exp)
-        self.dwise_bn = norm2d(w_exp)
+        self.dwise = conv2d(exp_s, exp_s, 3, stride=stride, groups=exp_s)
+        self.dwise_bn = norm2d(exp_s)
         self.dwise_af = activation(nl)
         # pointwise
-        self.lin_proj = conv2d(w_exp, w_out, 1)
+        self.lin_proj = conv2d(exp_s, w_out, 1)
         self.lin_proj_bn = norm2d(w_out)
         self.use_res_connect = (
             self.stride == 1 and w_in == w_out
@@ -78,16 +78,16 @@ class MBConv(Module):
         return f_x
 
     @staticmethod
-    def complexity(cx, w_in, exp_r, stride, w_out):
-        w_exp = int(w_in * exp_r)  # expand channel using expansion factor
-        if w_exp != w_in:
-            cx = conv2d_cx(cx, w_in, w_exp, 1)
-            cx = norm2d_cx(cx, w_exp)
+    def complexity(cx, w_in, exp_s, stride, w_out, nl, se):
+        # w_exp = int(w_in * exp_r)  # expand channel using expansion factor
+        if exp_s != w_in:
+            cx = conv2d_cx(cx, w_in, exp_s, 1)
+            cx = norm2d_cx(cx, exp_s)
         # depthwise
-        cx = conv2d_cx(cx, w_exp, w_exp, 3, stride=stride, groups=w_exp)
-        cx = norm2d_cx(cx, w_exp)
+        cx = conv2d_cx(cx, exp_s, exp_s, 3, stride=stride, groups=exp_s)
+        cx = norm2d_cx(cx, exp_s)
         # pointwise
-        cx = conv2d_cx(cx, w_exp, w_out, 1)
+        cx = conv2d_cx(cx, exp_s, w_out, 1)
         cx = norm2d_cx(cx, w_out)
         return cx
 
