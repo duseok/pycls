@@ -17,6 +17,25 @@ from torch.nn import Dropout, Module
 from torch.nn.quantized import FloatFunctional
 from torch.quantization import fuse_modules
 
+class SELayer(Module):
+    """MobileNetV3 inverted sqeeze-and-excite"""
+    
+    def __init__(self, channel, reduction=4):
+        super(SELayer, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+                nn.Linear(channel, _make_divisible(channel // reduction, 8)),
+                nn.ReLU(inplace=True),
+                nn.Linear(_make_divisible(channel // reduction, 8), channel),
+                h_sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1)
+        return x * y
+
 class StemImageNet(Module):
     """MobileNetV3 stem for ImageNet: 3x3, BN, AF(Hswish)."""
 
@@ -60,6 +79,9 @@ class MBConv(Module):
         self.dwise = conv2d(exp_s, exp_s, 3, stride=stride, groups=exp_s)
         self.dwise_bn = norm2d(exp_s)
         self.dwise_af = activation(nl)
+        # squeeze-and-excite
+        if se:
+            SELayer(exp_s)
         # pointwise
         self.lin_proj = conv2d(exp_s, w_out, 1)
         self.lin_proj_bn = norm2d(w_out)
@@ -78,7 +100,7 @@ class MBConv(Module):
         return f_x
 
     @staticmethod
-    def complexity(cx, w_in, exp_s, stride, w_out, nl, se):
+    def complexity(cx, w_in, exp_s, stride, w_out):
         # w_exp = int(w_in * exp_r)  # expand channel using expansion factor
         if exp_s != w_in:
             cx = conv2d_cx(cx, w_in, exp_s, 1)
@@ -111,7 +133,7 @@ class MNV3Stage(Module):
         super(MNV3Stage, self).__init__()
         stride = stride
         block = MBConv(w_in, exp_s, stride, w_out, nl, se)
-        self.add_module("b{}".format(i + 1), block)
+        self.add_module("b{}".format(1), block)
         stride, w_in = 1, w_out
 
     def forward(self, x):
@@ -220,14 +242,16 @@ class MobileNetV3(Module):
     def complexity(cx, params=None):
         """Computes model complexity (if you alter the model, make sure to update)."""
         p = MobileNetV3.get_params() if not params else params
+        p["exp_sz"] = [16, 64, 72, 72, 120, 120, 240, 200, 184, 184, 480, 672, 672, 960, 960]
         p["nl"] = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-        vs = ["sw", "ds", "ws", "exp_rs", "ss", "hw", "nc", "nl"]
-        sw, ds, ws, exp_rs, ss, hw, nc, nl = [p[v] for v in vs]
-        stage_params = list(zip(ds, ws, exp_rs, ss))
+        p["se"] = [0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1]
+        vs = ["sw", "ws", "ss", "hw", "nc", "exp_sz", "nl", "se"]
+        sw, ws, ss, hw, nc, exp_sz, nl, se = [p[v] for v in vs]
+        stage_params = list(zip(ws, ss, exp_sz, nl, se))
         cx = StemImageNet.complexity(cx, 3, sw)
         prev_w = sw
-        for d, w, exp_r, stride in stage_params:
-            cx = MNV3Stage.complexity(cx, prev_w, exp_r, stride, w, d)
+        for w, stride, exp_s, nl, se in stage_params:
+            cx = MNV3Stage.complexity(cx, prev_w, exp_s, stride, w)
             prev_w = w
         cx = MNV3Head.complexity(cx, prev_w, hw, nc)
         return cx
