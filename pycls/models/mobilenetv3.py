@@ -26,7 +26,7 @@ class StemImageNet(Module):
         super(StemImageNet, self).__init__()
         self.conv = conv2d(w_in, w_out, 3, stride=2)
         self.bn = norm2d(w_out)
-        self.af = hswish(w_in)
+        self.af = hswish()
 
     def forward(self, x):
         for layer in self.children():
@@ -58,14 +58,14 @@ class MBConv(Module):
             self.exp = conv2d(w_in, w_exp, 1)
             self.exp_bn = norm2d(w_exp)
             if nl == 1:
-                self.exp_af = hswish(w_in)
+                self.exp_af = hswish()
             else:
                 self.exp_af = activation()
         # depthwise
         self.dwise = conv2d(w_exp, w_exp, 3, stride=stride, groups=w_exp)
         self.dwise_bn = norm2d(w_exp)
         if nl == 1:
-            self.exp_af = hswish(w_in)
+            self.dwise_af = hswish()
         else:
             self.dwise_af = activation()
         # pointwise
@@ -151,7 +151,7 @@ class MNV3Head(Module):
         dropout_ratio = cfg.MNV2.DROPOUT_RATIO
         self.conv = conv2d(w_in, w_out, 1)
         self.conv_bn = norm2d(w_out)
-        self.conv_af = hswish(w_in)
+        self.conv_af = hswish()
         self.avg_pool = gap2d(w_out)
         # classifier
         self.dropout = Dropout(p=dropout_ratio) if dropout_ratio > 0 else None
@@ -160,8 +160,7 @@ class MNV3Head(Module):
     def forward(self, x):
         x = self.conv_af(self.conv_bn(self.conv(x)))
         x = self.avg_pool(x)
-        x = self.conv_af(self.conv_bn(self.conv(x)))
-        x = self.conv_af(self.conv_bn(self.conv(x)))
+        x = self.conv_af(self.conv(x))
         x = x.view(x.size(0), -1)
         x = self.dropout(x) if self.dropout else x
         x = self.fc(x)
