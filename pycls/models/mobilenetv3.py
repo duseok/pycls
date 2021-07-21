@@ -12,11 +12,18 @@ from pycls.models.blocks import (
     linear_cx,
     norm2d,
     norm2d_cx,
-    hswish,
 )
 from torch.nn import Dropout, Module
 from torch.nn.quantized import FloatFunctional
 from torch.quantization import fuse_modules
+
+class hswish(Module):
+    def __init__(self):
+        super(h_swish, self).__init__
+        self.relu = nn.ReLU6()
+
+    def forward(self, x):
+        return x * self.relu(x + 3.) / 6.
 
 
 class StemImageNet(Module):

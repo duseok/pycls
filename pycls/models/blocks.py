@@ -17,10 +17,6 @@ from torch.quantization import fuse_modules
 
 # ----------------------- Shortcuts for common torch.nn layers ----------------------- #
 
-def hswish(w_in):
-    # return w_in * nn.ReLU6(w_in + 3.) / 6.
-    return np.float32(w_in) * nn.ReLU6(w_in + np.float32(3)) * np.float32(1. / 6.)
-
 def conv2d(w_in, w_out, k, *, stride=1, groups=1, bias=False):
     """Helper for building a conv2d layer."""
     assert k % 2 == 1, "Only odd size kernels supported to avoid padding issues."
@@ -108,6 +104,18 @@ def linear_cx(cx, w_in, w_out, *, bias=False):
     params += w_in * w_out + (w_out if bias else 0)
     acts += w_out
     return {"h": h, "w": w, "flops": flops, "params": params, "acts": acts}
+
+
+class hswish(Module):
+    def __init__(self):
+        super(h_swish, self).__init__
+        self.relu = nn.ReLU6()
+
+    def forward(self, x):
+        return self.relu(x + 3.) / 6.
+        
+    # return w_in * nn.ReLU6(w_in + 3.) / 6.
+    # return np.float32(w_in) * nn.ReLU6(w_in + np.float32(3)) * np.float32(1. / 6.)
 
 
 # ---------------------------------- Shared blocks ----------------------------------- #
