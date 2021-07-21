@@ -17,13 +17,13 @@ from torch.nn import Dropout, Module
 from torch.nn.quantized import FloatFunctional
 from torch.quantization import fuse_modules
 
-class hswish(Module):
-    def __init__(self):
-        super(h_swish, self).__init__
-        self.relu = nn.ReLU6()
+# class hswish(Module):
+#     def __init__(self):
+#         super(h_swish, self).__init__
+#         self.relu = nn.ReLU6()
 
-    def forward(self, x):
-        return x * self.relu(x + 3.) / 6.
+#     def forward(self, x):
+#         return x * self.relu(x + 3.) / 6.
 
 
 class StemImageNet(Module):
@@ -33,7 +33,8 @@ class StemImageNet(Module):
         super(StemImageNet, self).__init__()
         self.conv = conv2d(w_in, w_out, 3, stride=2)
         self.bn = norm2d(w_out)
-        self.af = hswish()
+        # self.af = hswish()
+        self.af = activation()
 
     def forward(self, x):
         for layer in self.children():
@@ -65,14 +66,14 @@ class MBConv(Module):
             self.exp = conv2d(w_in, w_exp, 1)
             self.exp_bn = norm2d(w_exp)
             if nl == 1:
-                self.exp_af = hswish()
+                self.exp_af = activation()
             else:
                 self.exp_af = activation()
         # depthwise
         self.dwise = conv2d(w_exp, w_exp, 3, stride=stride, groups=w_exp)
         self.dwise_bn = norm2d(w_exp)
         if nl == 1:
-            self.dwise_af = hswish()
+            self.dwise_af = activation()
         else:
             self.dwise_af = activation()
         # pointwise
@@ -158,7 +159,7 @@ class MNV3Head(Module):
         dropout_ratio = cfg.MNV2.DROPOUT_RATIO
         self.conv = conv2d(w_in, w_out, 1)
         self.conv_bn = norm2d(w_out)
-        self.conv_af = hswish()
+        self.conv_af = activation()
         self.avg_pool = gap2d(w_out)
         # classifier
         self.dropout = Dropout(p=dropout_ratio) if dropout_ratio > 0 else None
