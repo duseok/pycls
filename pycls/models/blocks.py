@@ -45,9 +45,11 @@ def linear(w_in, w_out, *, bias=False):
     return nn.Linear(w_in, w_out, bias=bias)
 
 
-def activation():
+def activation(nl):
     """Helper for building an activation layer."""
     activation_fun = cfg.MODEL.ACTIVATION_FUN.lower()
+    if nl == 1:
+        return nn.Hardswish(inplace=cfg.MODEL.ACTIVATION_INPLACE)
     if activation_fun == "relu":
         return nn.ReLU(inplace=cfg.MODEL.ACTIVATION_INPLACE)
     elif activation_fun == "relu6":
@@ -104,18 +106,6 @@ def linear_cx(cx, w_in, w_out, *, bias=False):
     params += w_in * w_out + (w_out if bias else 0)
     acts += w_out
     return {"h": h, "w": w, "flops": flops, "params": params, "acts": acts}
-
-
-class hswish(Module):
-    def __init__(self):
-        super(h_swish, self).__init__
-        self.relu = nn.ReLU6()
-
-    def forward(self, x):
-        return self.relu(x + 3.) / 6.
-        
-    # return w_in * nn.ReLU6(w_in + 3.) / 6.
-    # return np.float32(w_in) * nn.ReLU6(w_in + np.float32(3)) * np.float32(1. / 6.)
 
 
 # ---------------------------------- Shared blocks ----------------------------------- #
