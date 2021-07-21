@@ -5,6 +5,7 @@ from pycls.models.blocks import (
     activation,
     conv2d,
     conv2d_cx,
+    gap1d,
     gap2d,
     gap2d_cx,
     init_weights,
@@ -22,19 +23,21 @@ class SELayer(Module):
     
     def __init__(self, channel, reduction=4):
         super(SELayer, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Sequential(
-                nn.Linear(channel, _make_divisible(channel // reduction, 8)),
-                nn.ReLU(inplace=True),
-                nn.Linear(_make_divisible(channel // reduction, 8), channel),
-                h_sigmoid()
-        )
+        self.avg_pool = gap1d()
+        self.fc1 = conv2d(channel, _make_divisible(channel // reduction, 8), 1)
+        self.af1 = activation(0)
+        # self.af1 = ReLU(inplace=True)
+        self.fc2 = conv2d(_make_divisible(channel // reduction, 8), channel, 1)
+        self.af2 = activation(1)
 
     def forward(self, x):
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1, 1)
-        return x * y
+        se = self.avg_pool(x)
+        se = self.fc1(x)
+        se = self.af1(x)
+        se = self.fc2(x)
+        se = self.af(x)
+        return x * se
+
 
 class StemImageNet(Module):
     """MobileNetV3 stem for ImageNet: 3x3, BN, AF(Hswish)."""
