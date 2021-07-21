@@ -45,7 +45,7 @@ class StemImageNet(Module):
 class MBConv(Module):
     """MobileNetV3 inverted bottleneck block"""
 
-    def __init__(self, w_in, exp_r, stride, w_out, nl):
+    def __init__(self, w_in, exp_s, stride, w_out, nl, se):
         # Expansion, 3x3 depthwise, BN, AF, 1x1 pointwise, BN, skip_connection
         super(MBConv, self).__init__()
         self.stride = stride
@@ -107,14 +107,12 @@ class MBConv(Module):
 class MNV3Stage(Module):
     """MobileNetV3 stage."""
 
-    def __init__(self, w_in, exp_r, stride, w_out, d, nl):
+    def __init__(self, w_in, exp_s, stride, w_out, nl, se):
         super(MNV3Stage, self).__init__()
-
-        for i in range(d):  # d는 layer의 반복 횟수
-            stride = stride if i == 0 else 1
-            block = MBConv(w_in, exp_r, stride, w_out, nl)
-            self.add_module("b{}".format(i + 1), block)
-            stride, w_in = 1, w_out
+        stride = stride if i == 0 else 1
+        block = MBConv(w_in, exp_s, stride, w_out, nl, se)
+        self.add_module("b{}".format(i + 1), block)
+        stride, w_in = 1, w_out
 
     def forward(self, x):
         for block in self.children():
@@ -182,9 +180,7 @@ class MobileNetV3(Module):
     def get_params():
         return {
             "sw": cfg.MNV2.STEM_W,
-            "ds": cfg.MNV2.DEPTHS,
             "ws": cfg.MNV2.WIDTHS,
-            "exp_rs": cfg.MNV2.EXP_RATIOS,
             "ss": cfg.MNV2.STRIDES,
             "hw": cfg.MNV2.HEAD_W,
             "nc": cfg.MODEL.NUM_CLASSES,
@@ -193,15 +189,24 @@ class MobileNetV3(Module):
     def __init__(self, params=None):
         super(MobileNetV3, self).__init__()
         p = MobileNetV3.get_params() if not params else params
+
+        # parameters of MobileNetV3_large
+        # MNV2.STEM_W 16 \
+        # MNV2.STRIDES '[1, 2, 1, 2, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 1]' \
+        # MNV2.WIDTHS '[16, 24, 24, 40, 40, 40, 80, 80, 80, 80, 112, 112, 160, 160, 160]' \
+        # MNV2.HEAD_W 1280 \
+        # MNV2.NUM_CLASSES 1000
+
+        p["exp_sz"] = [16, 64, 72, 72, 120, 120, 240, 200, 184, 184, 480, 672, 672, 960, 960]
         p["nl"] = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-        vs = ["sw", "ds", "ws", "exp_rs", "ss", "hw", "nc", "nl"]
-        sw, ds, ws, exp_rs, ss, hw, nc, nl = [p[v] for v in vs]
-        stage_params = list(zip(ds, ws, exp_rs, ss, nl))
-        # sw = 16
+        p["se"] = [0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1]
+        vs = ["sw", "ws", "ss", "hw", "nc", "exp_sz", "nl", "se"]
+        sw, ws, ss, hw, nc, exp_sz, nl, se = [p[v] for v in vs]
+        stage_params = list(zip(ws, ss, exp_sz, nl, se))
         self.stem = StemImageNet(3, sw)
         prev_w = sw
-        for i, (d, w, exp_r, stride, nl) in enumerate(stage_params):
-            stage = MNV3Stage(prev_w, exp_r, stride, w, d, nl)
+        for i, (w, stride, exp_s, nl, se) in enumerate(stage_params):
+            stage = MNV3Stage(prev_w, exp_s, stride, w, nl, se)
             self.add_module("s{}".format(i + 1), stage)
             prev_w = w
         self.head = MNV3Head(prev_w, hw, nc)
