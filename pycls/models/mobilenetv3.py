@@ -13,6 +13,7 @@ from pycls.models.blocks import (
     linear_cx,
     norm2d,
     norm2d_cx,
+    make_divisible,
 )
 from torch.nn import Dropout, Module
 from torch.nn.quantized import FloatFunctional
@@ -24,10 +25,10 @@ class SELayer(Module):
     def __init__(self, channel, reduction=4):
         super(SELayer, self).__init__()
         self.avg_pool = gap2d(1)
-        self.fc1 = conv2d(channel, channel//reduction, 1)
+        self.fc1 = conv2d(channel, make_divisible(channel//reduction, 8), 1)
         self.af1 = activation(0)
         # self.af1 = ReLU(inplace=True)
-        self.fc2 = conv2d(channel//reduction, channel, 1)
+        self.fc2 = conv2d(make_divisible(channel//reduction, 8), channel, 1)
         self.af2 = activation(1)
 
     def forward(self, x):
@@ -42,7 +43,8 @@ class SELayer(Module):
     def complexity(cx, channel, reduction=4):
         cx = gap2d_cx(cx, 1)
         cx = conv2d_cx(cx, channel, channel//reduction, 1)
-        cx = conv2d_cx(cx, channel//reduction, 1)
+        cx = conv2d_cx(cx, channel//reduction, channel, 1)
+        return cx
 
 class StemImageNet(Module):
     """MobileNetV3 stem for ImageNet: 3x3, BN, AF(Hswish)."""
@@ -78,6 +80,8 @@ class MBConv(Module):
         self.stride = stride
         assert stride in [1, 2]  # stride must be 1 or 2
         self.exp = None
+        self.se = se
+        self.exp_s = exp_s
         # w_exp = int(w_in * exp_r)  # expand channel using expansion factor(exp_r)
         if exp_s != w_in:  # skip if exp_r is 1
             self.exp = conv2d(w_in, exp_s, 1)
@@ -88,8 +92,8 @@ class MBConv(Module):
         self.dwise_bn = norm2d(exp_s)
         self.dwise_af = activation(nl)
         # squeeze-and-excite
-        if se == 1:
-            selayer = SELayer(exp_s)
+        # if self.se == 1:
+        #     selayer = SELayer(exp_s)
         # pointwise
         self.lin_proj = conv2d(exp_s, w_out, 1)
         self.lin_proj_bn = norm2d(w_out)
@@ -102,7 +106,7 @@ class MBConv(Module):
     def forward(self, x):
         f_x = self.exp_af(self.exp_bn(self.exp(x))) if self.exp else x
         f_x = self.dwise_af(self.dwise_bn(self.dwise(f_x)))
-        f_x = selayer(f_x) if self.se == 1 else f_x
+        f_x = SELayer(f_x, self.exp_s) if self.se == 1 else f_x
         f_x = self.lin_proj_bn(self.lin_proj(f_x))
         if self.use_res_connect:
             f_x = self.skip_add.add(x, f_x)

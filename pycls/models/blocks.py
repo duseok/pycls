@@ -17,6 +17,16 @@ from torch.quantization import fuse_modules
 
 # ----------------------- Shortcuts for common torch.nn layers ----------------------- #
 
+def make_divisible(v, divisor, min_value=None):
+    if min_value is None:
+        min_value = divisor
+    new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
+    # Make sure that round down does not go down by more than 10%.
+    if new_v < 0.9 * v:
+        new_v += divisor
+    return new_v
+
+
 def conv2d(w_in, w_out, k, *, stride=1, groups=1, bias=False):
     """Helper for building a conv2d layer."""
     assert k % 2 == 1, "Only odd size kernels supported to avoid padding issues."
