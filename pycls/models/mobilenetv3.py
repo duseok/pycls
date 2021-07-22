@@ -31,7 +31,7 @@ class SELayer(Module):
         self.fc2 = conv2d(make_divisible(channel//reduction, 8), channel, 1)
         self.af2 = activation(1)
 
-    def forward(self, x):
+    def forward(self, dx):
         se = self.avg_pool(x)
         se = self.fc1(x)
         se = self.af1(x)
@@ -92,8 +92,8 @@ class MBConv(Module):
         self.dwise_bn = norm2d(exp_s)
         self.dwise_af = activation(nl)
         # squeeze-and-excite
-        # if self.se == 1:
-        #     selayer = SELayer(exp_s)
+        if self.se == 1:
+            selayer = SELayer(exp_s)
         # pointwise
         self.lin_proj = conv2d(exp_s, w_out, 1)
         self.lin_proj_bn = norm2d(w_out)
@@ -107,6 +107,10 @@ class MBConv(Module):
         f_x = self.exp_af(self.exp_bn(self.exp(x))) if self.exp else x
         f_x = self.dwise_af(self.dwise_bn(self.dwise(f_x)))
         f_x = SELayer(f_x, self.exp_s) if self.se == 1 else f_x
+        if self.se == 1:
+            for selayer in self.children():
+                f_x = selayer(f_x)
+            return f_x
         f_x = self.lin_proj_bn(self.lin_proj(f_x))
         if self.use_res_connect:
             f_x = self.skip_add.add(x, f_x)
