@@ -32,11 +32,9 @@ class SELayer(Module):
         self.af2 = activation(1)
 
     def forward(self, x):
-        se = self.avg_pool(x)
-        se = self.fc1(se)
-        se = self.af1(se)
-        se = self.fc2(se)
-        se = self.af2(se)
+        b, c, _, _ = x.size()
+        se = self.avg_pool(x).view(b, c)
+        se = self.af2(self.fc2(self.af1(self.fc1(se)))).view(b, c, 1, 1)
         return x * se
 
     @staticmethod
@@ -106,6 +104,7 @@ class MBConv(Module):
     def forward(self, x):
         f_x = self.exp_af(self.exp_bn(self.exp(x))) if self.exp else x
         f_x = self.dwise_af(self.dwise_bn(self.dwise(f_x)))
+    
         f_x = self.selayer(f_x) if self.se == 1 else f_x
         f_x = self.lin_proj_bn(self.lin_proj(f_x))
         if self.use_res_connect:
