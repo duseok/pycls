@@ -31,19 +31,19 @@ class SELayer(Module):
         self.fc2 = conv2d(make_divisible(channel//reduction, 8), channel, 1)
         self.af2 = activation(1)
 
-    def forward(self, dx):
+    def forward(self, x):
         se = self.avg_pool(x)
-        se = self.fc1(x)
-        se = self.af1(x)
-        se = self.fc2(x)
-        se = self.af(x)
+        se = self.fc1(se)
+        se = self.af1(se)
+        se = self.fc2(se)
+        se = self.af(se)
         return x * se
 
     @staticmethod
     def complexity(cx, channel, reduction=4):
         cx = gap2d_cx(cx, 1)
-        cx = conv2d_cx(cx, channel, channel//reduction, 1)
-        cx = conv2d_cx(cx, channel//reduction, channel, 1)
+        cx = conv2d_cx(cx, channel, make_divisible(channel//reduction, 8), 1)
+        cx = conv2d_cx(cx, make_divisible(channel//reduction, 8), channel, 1)
         return cx
 
 class StemImageNet(Module):
@@ -106,7 +106,7 @@ class MBConv(Module):
     def forward(self, x):
         f_x = self.exp_af(self.exp_bn(self.exp(x))) if self.exp else x
         f_x = self.dwise_af(self.dwise_bn(self.dwise(f_x)))
-        f_x = SELayer(f_x, self.exp_s) if self.se == 1 else f_x
+        # f_x = SELayer(f_x, self.exp_s) if self.se == 1 else f_x
         if self.se == 1:
             for selayer in self.children():
                 f_x = selayer(f_x)
