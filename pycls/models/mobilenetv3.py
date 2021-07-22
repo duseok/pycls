@@ -109,7 +109,7 @@ class MBConv(Module):
         return f_x
 
     @staticmethod
-    def complexity(cx, w_in, exp_s, stride, w_out):
+    def complexity(cx, w_in, exp_s, stride, w_out, se):
         # w_exp = int(w_in * exp_r)  # expand channel using expansion factor
         if exp_s != w_in:
             cx = conv2d_cx(cx, w_in, exp_s, 1)
@@ -118,7 +118,7 @@ class MBConv(Module):
         cx = conv2d_cx(cx, exp_s, exp_s, 3, stride=stride, groups=exp_s)
         cx = norm2d_cx(cx, exp_s)
         # squeeze-and-excite
-        cx = SELayer.complexity(cx, exp_s) if self.se == 1 else cx
+        cx = SELayer.complexity(cx, exp_s) if se == 1 else cx
         # pointwise
         cx = conv2d_cx(cx, exp_s, w_out, 1)
         cx = norm2d_cx(cx, w_out)
@@ -153,9 +153,9 @@ class MNV3Stage(Module):
         return x
 
     @staticmethod
-    def complexity(cx, w_in, exp_r, stride, w_out):
+    def complexity(cx, w_in, exp_r, stride, w_out, se):
         stride = stride
-        cx = MBConv.complexity(cx, w_in, exp_r, stride, w_out)
+        cx = MBConv.complexity(cx, w_in, exp_r, stride, w_out, se)
         stride, w_in = 1, w_out
         return cx
 
@@ -262,7 +262,7 @@ class MobileNetV3(Module):
         cx = StemImageNet.complexity(cx, 3, sw)
         prev_w = sw
         for w, stride, exp_s, nl, se in stage_params:
-            cx = MNV3Stage.complexity(cx, prev_w, exp_s, stride, w)
+            cx = MNV3Stage.complexity(cx, prev_w, exp_s, stride, w, se)
             prev_w = w
         cx = MNV3Head.complexity(cx, prev_w, hw, nc)
         return cx
