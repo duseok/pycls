@@ -106,11 +106,7 @@ class MBConv(Module):
     def forward(self, x):
         f_x = self.exp_af(self.exp_bn(self.exp(x))) if self.exp else x
         f_x = self.dwise_af(self.dwise_bn(self.dwise(f_x)))
-        # f_x = SELayer(f_x, self.exp_s) if self.se == 1 else f_x
-        if self.se == 1:
-            for selayer in self.children():
-                f_x = selayer(f_x)
-            return f_x
+        f_x = selayer(f_x) if self.se == 1 else f_x
         f_x = self.lin_proj_bn(self.lin_proj(f_x))
         if self.use_res_connect:
             f_x = self.skip_add.add(x, f_x)
@@ -173,18 +169,19 @@ class MNV3Stage(Module):
                 m.fuse_model(include_relu)
 
 
-class MNV3Head(Module):
-    """MobileNetV3 head: 1x1, BN, AF(ReLU6), AvgPool, Dropout, FC."""
 
-    def __init__(self, w_in, w_out, num_classes):
+class MNV3Head(Module):
+    """MobileNetV3 head: 1x1, BN, AF(ReLU6), AvgPool, FC, Dropout, FC."""
+
+    def __init__(self, w_in, w_out, num_classes, exp_s):
         super(MNV3Head, self).__init__()
         dropout_ratio = cfg.MNV2.DROPOUT_RATIO
-        self.conv = conv2d(w_in, w_out, 1)
-        self.conv_bn = norm2d(w_out)
+        self.conv = conv2d(w_in, exp_s, 1)
+        self.conv_bn = norm2d(exp_s)
         self.conv_af = activation(1)
-        self.avg_pool = gap2d(w_out)
+        self.avg_pool = gap2d(exp_s)
         # classifier
-        self.fc1 = linear(w_out, w_out, bias = True)
+        self.fc1 = linear(exp_s, w_out, bias = True)
         self.dropout = Dropout(p=dropout_ratio) if dropout_ratio > 0 else None
         self.fc2 = linear(w_out, num_classes, bias=True)
 
@@ -249,7 +246,7 @@ class MobileNetV3(Module):
             stage = MNV3Stage(prev_w, exp_s, stride, w, nl, se)
             self.add_module("s{}".format(i + 1), stage)
             prev_w = w
-        self.head = MNV3Head(prev_w, hw, nc)
+        self.head = MNV3Head(prev_w, hw, nc, exp_s)
         self.apply(init_weights)
 
     def forward(self, x):
