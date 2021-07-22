@@ -23,11 +23,11 @@ class SELayer(Module):
     
     def __init__(self, channel, reduction=4):
         super(SELayer, self).__init__()
-        self.avg_pool = gap1d()
-        self.fc1 = conv2d(channel, _make_divisible(channel // reduction, 8), 1)
+        self.avg_pool = gap2d(1)
+        self.fc1 = conv2d(channel, channel//reduction, 1)
         self.af1 = activation(0)
         # self.af1 = ReLU(inplace=True)
-        self.fc2 = conv2d(_make_divisible(channel // reduction, 8), channel, 1)
+        self.fc2 = conv2d(channel//reduction, channel, 1)
         self.af2 = activation(1)
 
     def forward(self, x):
@@ -38,6 +38,11 @@ class SELayer(Module):
         se = self.af(x)
         return x * se
 
+    @staticmethod
+    def complexity(cx, channel, reduction=4):
+        cx = gap2d_cx(cx, 1)
+        cx = conv2d_cx(cx, channel, channel//reduction, 1)
+        cx = conv2d_cx(cx, channel//reduction, 1)
 
 class StemImageNet(Module):
     """MobileNetV3 stem for ImageNet: 3x3, BN, AF(Hswish)."""
@@ -83,8 +88,8 @@ class MBConv(Module):
         self.dwise_bn = norm2d(exp_s)
         self.dwise_af = activation(nl)
         # squeeze-and-excite
-        if se:
-            SELayer(exp_s)
+        if se == 1:
+            selayer = SELayer(exp_s)
         # pointwise
         self.lin_proj = conv2d(exp_s, w_out, 1)
         self.lin_proj_bn = norm2d(w_out)
@@ -97,6 +102,7 @@ class MBConv(Module):
     def forward(self, x):
         f_x = self.exp_af(self.exp_bn(self.exp(x))) if self.exp else x
         f_x = self.dwise_af(self.dwise_bn(self.dwise(f_x)))
+        f_x = selayer(f_x) if self.se == 1 else f_x
         f_x = self.lin_proj_bn(self.lin_proj(f_x))
         if self.use_res_connect:
             f_x = self.skip_add.add(x, f_x)
@@ -111,6 +117,8 @@ class MBConv(Module):
         # depthwise
         cx = conv2d_cx(cx, exp_s, exp_s, 3, stride=stride, groups=exp_s)
         cx = norm2d_cx(cx, exp_s)
+        # squeeze-and-excite
+        cx = SELayer.complexity(cx, exp_s) if self.se == 1 else cx
         # pointwise
         cx = conv2d_cx(cx, exp_s, w_out, 1)
         cx = norm2d_cx(cx, w_out)
