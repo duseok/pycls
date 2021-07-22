@@ -25,10 +25,10 @@ class SELayer(Module):
     def __init__(self, channel, reduction=4):
         super(SELayer, self).__init__()
         self.avg_pool = gap2d(1)
-        self.fc1 = conv2d(channel, make_divisible(channel//reduction, 8), 1)
+        self.fc1 = linear(channel, make_divisible(channel//reduction, 8), bias=True)
         self.af1 = activation(0)
         # self.af1 = ReLU(inplace=True)
-        self.fc2 = conv2d(make_divisible(channel//reduction, 8), channel, 1)
+        self.fc2 = linear(make_divisible(channel//reduction, 8), channel, bias=True)
         self.af2 = activation(1)
 
     def forward(self, x):
@@ -36,14 +36,14 @@ class SELayer(Module):
         se = self.fc1(se)
         se = self.af1(se)
         se = self.fc2(se)
-        se = self.af(se)
+        se = self.af2(se)
         return x * se
 
     @staticmethod
     def complexity(cx, channel, reduction=4):
         cx = gap2d_cx(cx, 1)
-        cx = conv2d_cx(cx, channel, make_divisible(channel//reduction, 8), 1)
-        cx = conv2d_cx(cx, make_divisible(channel//reduction, 8), channel, 1)
+        cx = linear_cx(cx, channel, make_divisible(channel//reduction, 8), bias=True)
+        cx = linear_cx(cx, make_divisible(channel//reduction, 8), channel, bias=True)
         return cx
 
 class StemImageNet(Module):
@@ -93,7 +93,7 @@ class MBConv(Module):
         self.dwise_af = activation(nl)
         # squeeze-and-excite
         if self.se == 1:
-            selayer = SELayer(exp_s)
+            self.selayer = SELayer(exp_s)
         # pointwise
         self.lin_proj = conv2d(exp_s, w_out, 1)
         self.lin_proj_bn = norm2d(w_out)
@@ -106,7 +106,7 @@ class MBConv(Module):
     def forward(self, x):
         f_x = self.exp_af(self.exp_bn(self.exp(x))) if self.exp else x
         f_x = self.dwise_af(self.dwise_bn(self.dwise(f_x)))
-        f_x = selayer(f_x) if self.se == 1 else f_x
+        f_x = self.selayer(f_x) if self.se == 1 else f_x
         f_x = self.lin_proj_bn(self.lin_proj(f_x))
         if self.use_res_connect:
             f_x = self.skip_add.add(x, f_x)
