@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
+from pycls.core.config import cfg
 from torch.nn.parameter import Parameter
 from torch.quantization.fake_quantize import FakeQuantizeBase
 
@@ -15,9 +16,23 @@ class ShiftScaleQuant(torch.autograd.Function):
         return grad_output
 
 
+class FakeQuantFunc(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, quant_x: torch.Tensor):
+        ctx.save_for_backward(x - quant_x)
+        return quant_x.clone().detach_()
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        diff = ctx.saved_tensors[0]
+        grad = 2 * diff.div_(diff.numel())
+        return grad, grad_output
+
+
 class ShiftFakeQuantize(FakeQuantizeBase):
     scale: Parameter
     zero_point: torch.Tensor
+    bitwidth: torch.Tensor
 
     def __init__(self, observer, quant_min=0, quant_max=255, **observer_kwargs):
         super().__init__()
@@ -34,6 +49,10 @@ class ShiftFakeQuantize(FakeQuantizeBase):
         ), "quant_max out of bound"
         self.scale = Parameter(torch.tensor([np.log(np.exp(1) - 1)], dtype=torch.float))
         self.register_buffer("zero_point", torch.tensor([0.0]))
+        self.register_buffer(
+            "bitwidth",
+            torch.tensor([np.log2(quant_max - quant_min + 1)], dtype=torch.int),
+        )
         self.dtype = self.activation_post_process.dtype
         self.qscheme = self.activation_post_process.qscheme
 
@@ -51,10 +70,12 @@ class ShiftFakeQuantize(FakeQuantizeBase):
 
         if self.fake_quant_enabled[0] == 1:
             s = ShiftScaleQuant.apply(F.softplus(self.scale))
-            X = torch._fake_quantize_learnable_per_tensor_affine(
+            Y = torch._fake_quantize_learnable_per_tensor_affine(
                 X, s, self.zero_point, self.quant_min, self.quant_max, 1.0
             )
-        return X
+            if cfg.QUANTIZATION.QAT.ENABLE_QUANTIZATION_LOSS:
+                Y = FakeQuantFunc.apply(X, Y)
+        return Y
 
     @torch.jit.export
     def calculate_qparams(self):
@@ -86,6 +107,7 @@ class ShiftFakeQuantize(FakeQuantizeBase):
         )
         destination[prefix + "scale"] = self.scale.data
         destination[prefix + "zero_point"] = self.zero_point
+        destination[prefix + "bitwidth"] = self.bitwidth
 
     def _load_from_state_dict(
         self,
@@ -99,7 +121,7 @@ class ShiftFakeQuantize(FakeQuantizeBase):
     ):
         # Removing this function throws an error that the the size of the loaded tensor does not match the original size
         # i.e., These buffers start out with numel 0 and become numel 1 once they have their first forward pass.
-        local_state = ["scale", "zero_point"]
+        local_state = ["scale", "zero_point", "bitwidth"]
         for name in local_state:
             key = prefix + name
             if key in state_dict:
@@ -115,9 +137,11 @@ class ShiftFakeQuantize(FakeQuantizeBase):
                 if torch.jit.is_scripting():
                     if name == "scale":
                         self.scale.data.fill_(val)
-                    else:
-                        assert name == "zero_point"
+                    elif name == "zero_point":
                         self.zero_point.copy_(val)
+                    else:
+                        assert name == "bitwidth"
+                        self.bitwidth.copy_(val)
             elif strict:
                 missing_keys.append(key)
         super(ShiftFakeQuantize, self)._load_from_state_dict(

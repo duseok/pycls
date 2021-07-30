@@ -79,6 +79,9 @@ _C.QUANTIZATION.QAT.BN_TRAIN_EPOCH = -1
 # Number of epochs for stabilizing BN
 _C.QUANTIZATION.QAT.BN_STABILIZATION_EPOCH = 0
 
+# Number of warm up epochs for stabilizing BN
+_C.QUANTIZATION.QAT.BN_STAB_WARMUP_EPOCH = 0
+
 # Same scale value for skip connection
 _C.QUANTIZATION.QAT.TRAIN_SAME_SCALE4SKIP = True
 
@@ -99,6 +102,9 @@ _C.QUANTIZATION.QAT.WITH_BN = True
 
 # QAT model with BN -> QAT model without BN
 _C.QUANTIZATION.QAT.FOLDING_BN = False
+
+# Use MSE loss between float tensor and quantized tensor
+_C.QUANTIZATION.QAT.ENABLE_QUANTIZATION_LOSS = False
 
 # ---------------------------------- ResNet options ---------------------------------- #
 _C.RESNET = CfgNode()
