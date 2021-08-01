@@ -25,7 +25,9 @@ class FakeQuantFunc(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
         diff = ctx.saved_tensors[0]
-        grad = 2 * diff.div_(diff.numel())
+        mask_diff = grad_output.abs().lt(cfg.QUANTIZATION.QAT.QUANTIZATION_LOSS_BETA)
+        alpha = cfg.QUANTIZATION.QAT.QUANTIZATION_LOSS_ALPHA
+        grad = 2 * diff.div_(diff.numel()) * mask_diff.int().float() * alpha
         return grad, grad_output
 
 
