@@ -22,6 +22,7 @@ from pycls.core.setup import (
     setup_teacher,
 )
 from pycls.quantization.quant_op import QConvBn2d
+from pycls.quantization.scale_activation import get_scale_act
 from torch.optim.optimizer import Optimizer
 
 if TYPE_CHECKING:
@@ -121,14 +122,15 @@ def _enable_bias_quant(module):
 
 
 def _correct_quant_param(module):
-    import torch.nn.functional as F
     from pycls.quantization.shift_fake_quantizer import ShiftFakeQuantize
 
     act_bitwidth = cfg.QUANTIZATION.QAT.ACT_BITWIDTH
     weight_bitwidth = cfg.QUANTIZATION.QAT.WEIGHT_BITWIDTH
 
     def _correct(s, orig_w, new_w):
-        return torch.log(torch.exp(F.softplus(s) * torch.exp2(orig_w - new_w)) - 1)
+        scale_act = get_scale_act()
+        _s = scale_act.apply(s) * torch.exp2(orig_w - new_w)
+        return scale_act.inverse(_s)
 
     for _, m in module.named_children():
         if (

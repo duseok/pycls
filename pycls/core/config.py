@@ -67,6 +67,9 @@ _C.QUANTIZATION.METHOD = (
 # ---------------------------------- QAT options ----------------------------------- #
 _C.QUANTIZATION.QAT = CfgNode()
 
+# Activation function for scale from {'softplus', 'sigmoid'}
+_C.QUANTIZATION.QAT.SCALE_ACT = "softplus"
+
 # Weights to start training from
 _C.QUANTIZATION.QAT.FP32_WEIGHTS = ""
 
