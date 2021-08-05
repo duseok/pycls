@@ -17,6 +17,7 @@ from torch.quantization import fuse_modules
 
 # ----------------------- Shortcuts for common torch.nn layers ----------------------- #
 
+
 def make_divisible(v, divisor, min_value=None):
     if min_value is None:
         min_value = divisor
@@ -60,11 +61,11 @@ def linear(w_in, w_out, *, bias=False):
     return nn.Linear(w_in, w_out, bias=bias)
 
 
-def activation(nl):
+def activation():
     """Helper for building an activation layer."""
     activation_fun = cfg.MODEL.ACTIVATION_FUN.lower()
-    if nl == 1:
-        return nn.Hardswish(inplace=cfg.MODEL.ACTIVATION_INPLACE)
+    # if nl == 1:
+    #     return nn.Hardswish(inplace=cfg.MODEL.ACTIVATION_INPLACE)
     if activation_fun == "relu":
         return nn.ReLU(inplace=cfg.MODEL.ACTIVATION_INPLACE)
     elif activation_fun == "relu6":
@@ -194,7 +195,8 @@ def init_weights(m):
         m.weight.data.normal_(mean=0.0, std=np.sqrt(2.0 / fan_out))
     elif isinstance(m, nn.BatchNorm2d):
         zero_init_gamma = cfg.BN.ZERO_INIT_FINAL_GAMMA
-        zero_init_gamma = hasattr(m, "final_bn") and m.final_bn and zero_init_gamma
+        zero_init_gamma = hasattr(
+            m, "final_bn") and m.final_bn and zero_init_gamma
         m.weight.data.fill_(0.0 if zero_init_gamma else 1.0)
         m.bias.data.zero_()
     elif isinstance(m, nn.Linear):

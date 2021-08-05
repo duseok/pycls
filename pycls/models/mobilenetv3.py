@@ -1,5 +1,6 @@
 """MobileNetV3 models."""
 
+import torch.nn as nn
 from pycls.core.config import cfg
 from pycls.models.blocks import (
     activation,
@@ -19,17 +20,20 @@ from torch.nn import Dropout, Module
 from torch.nn.quantized import FloatFunctional
 from torch.quantization import fuse_modules
 
+
 class SELayer(Module):
     """MobileNetV3 inverted sqeeze-and-excite"""
-    
+
     def __init__(self, channel, reduction=4):
         super(SELayer, self).__init__()
         self.avg_pool = gap2d(1)
-        self.fc1 = linear(channel, make_divisible(channel//reduction, 8), bias=True)
-        self.af1 = activation(0)
-        # self.af1 = ReLU(inplace=True)
-        self.fc2 = linear(make_divisible(channel//reduction, 8), channel, bias=True)
-        self.af2 = activation(1)
+        self.fc1 = linear(channel, make_divisible(
+            channel//reduction, 8), bias=True)
+        self.af1 = activation()
+        self.fc2 = linear(make_divisible(
+            channel//reduction, 8), channel, bias=True)
+        self.af2 = nn.Hardswish(
+            inplace=cfg.MODEL.ACTIVATION_INPLACE)
 
     def forward(self, x):
         b, c, _, _ = x.size()
@@ -40,27 +44,29 @@ class SELayer(Module):
     @staticmethod
     def complexity(cx, channel, reduction=4):
         cx = gap2d_cx(cx, 1)
-        cx = linear_cx(cx, channel, make_divisible(channel//reduction, 8), bias=True)
-        cx = linear_cx(cx, make_divisible(channel//reduction, 8), channel, bias=True)
+        cx = linear_cx(cx, channel, make_divisible(
+            channel//reduction, 8), bias=True)
+        cx = linear_cx(cx, make_divisible(
+            channel//reduction, 8), channel, bias=True)
         return cx
+
 
 class StemImageNet(Module):
     """MobileNetV3 stem for ImageNet: 3x3, BN, AF(Hswish)."""
 
     def __init__(self, w_in, w_out):
         super(StemImageNet, self).__init__()
-        self.conv = conv2d(w_in, w_out, 3, stride=2)
+        self.conv = conv2d(w_in, w_out, 3, stride=2, padding=1, bias=False)
         self.bn = norm2d(w_out)
-        self.af = activation(1)
+        self.af = nn.Hardswish(inplace=cfg.MODEL.ACTIVATION_INPLACE)
 
     def forward(self, x):
-        for layer in self.children():
-            x = layer(x)
+        x = self.af(self.bn(self.conv(x)))
         return x
 
     @staticmethod
     def complexity(cx, w_in, w_out):
-        cx = conv2d_cx(cx, w_in, w_out, 3, stride=2)
+        cx = conv2d_cx(cx, w_in, w_out, 3, stride=2, padding=1, bias=False)
         cx = norm2d_cx(cx, w_out)
         return cx
 
@@ -84,11 +90,13 @@ class MBConv(Module):
         if exp_s != w_in:  # skip if exp_r is 1
             self.exp = conv2d(w_in, exp_s, 1)
             self.exp_bn = norm2d(exp_s)
-            self.exp_af = activation(nl)
+            self.exp_af = nn.Hardswish(
+                inplace=cfg.MODEL.ACTIVATION_INPLACE) if nl == 1 else activation()
         # depthwise
         self.dwise = conv2d(exp_s, exp_s, 3, stride=stride, groups=exp_s)
         self.dwise_bn = norm2d(exp_s)
-        self.dwise_af = activation(nl)
+        self.dwise_af = nn.Hardswish(
+            inplace=cfg.MODEL.ACTIVATION_INPLACE) if nl == 1 else activation()
         # squeeze-and-excite
         if self.se == 1:
             self.selayer = SELayer(exp_s)
@@ -104,7 +112,6 @@ class MBConv(Module):
     def forward(self, x):
         f_x = self.exp_af(self.exp_bn(self.exp(x))) if self.exp else x
         f_x = self.dwise_af(self.dwise_bn(self.dwise(f_x)))
-    
         f_x = self.selayer(f_x) if self.se == 1 else f_x
         f_x = self.lin_proj_bn(self.lin_proj(f_x))
         if self.use_res_connect:
@@ -168,7 +175,6 @@ class MNV3Stage(Module):
                 m.fuse_model(include_relu)
 
 
-
 class MNV3Head(Module):
     """MobileNetV3 head: 1x1, BN, AF(ReLU6), AvgPool, FC, Dropout, FC."""
 
@@ -177,10 +183,10 @@ class MNV3Head(Module):
         dropout_ratio = cfg.MNV2.DROPOUT_RATIO
         self.conv = conv2d(w_in, exp_s, 1)
         self.conv_bn = norm2d(exp_s)
-        self.conv_af = activation(1)
+        self.conv_af = nn.Hardswish(inplace=cfg.MODEL.ACTIVATION_INPLACE)
         self.avg_pool = gap2d(exp_s)
         # classifier
-        self.fc1 = linear(exp_s, w_out, bias = True)
+        self.fc1 = linear(exp_s, w_out, bias=True)
         self.dropout = Dropout(p=dropout_ratio) if dropout_ratio > 0 else None
         self.fc2 = linear(w_out, num_classes, bias=True)
 
@@ -204,7 +210,8 @@ class MNV3Head(Module):
 
     def fuse_model(self, include_relu: bool):
         targets = (
-            [["conv", "conv_bn", "conv_af"]] if include_relu else [["conv", "conv_bn"]]
+            [["conv", "conv_bn", "conv_af"]] if include_relu else [
+                ["conv", "conv_bn"]]
         )
         fuse_modules(self, targets, inplace=True)
 
@@ -233,7 +240,8 @@ class MobileNetV3(Module):
         # MNV2.HEAD_W 1280 \
         # MNV2.NUM_CLASSES 1000
 
-        p["exp_sz"] = [16, 64, 72, 72, 120, 120, 240, 200, 184, 184, 480, 672, 672, 960, 960]
+        p["exp_sz"] = [16, 64, 72, 72, 120, 120, 240,
+                       200, 184, 184, 480, 672, 672, 960, 960]
         p["nl"] = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
         p["se"] = [0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1]
         vs = ["sw", "ws", "ss", "hw", "nc", "exp_sz", "nl", "se"]
@@ -257,7 +265,8 @@ class MobileNetV3(Module):
     def complexity(cx, params=None):
         """Computes model complexity (if you alter the model, make sure to update)."""
         p = MobileNetV3.get_params() if not params else params
-        p["exp_sz"] = [16, 64, 72, 72, 120, 120, 240, 200, 184, 184, 480, 672, 672, 960, 960]
+        p["exp_sz"] = [16, 64, 72, 72, 120, 120, 240,
+                       200, 184, 184, 480, 672, 672, 960, 960]
         p["nl"] = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
         p["se"] = [0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1]
         vs = ["sw", "ws", "ss", "hw", "nc", "exp_sz", "nl", "se"]
