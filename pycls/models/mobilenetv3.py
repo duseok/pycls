@@ -56,7 +56,7 @@ class StemImageNet(Module):
 
     def __init__(self, w_in, w_out):
         super(StemImageNet, self).__init__()
-        self.conv = conv2d(w_in, w_out, 3, stride=2, padding=1, bias=False)
+        self.conv = conv2d(w_in, w_out, 3, stride=2)
         self.bn = norm2d(w_out)
         self.af = nn.Hardswish(inplace=cfg.MODEL.ACTIVATION_INPLACE)
 
@@ -66,7 +66,7 @@ class StemImageNet(Module):
 
     @staticmethod
     def complexity(cx, w_in, w_out):
-        cx = conv2d_cx(cx, w_in, w_out, 3, stride=2, padding=1, bias=False)
+        cx = conv2d_cx(cx, w_in, w_out, 3, stride=2)
         cx = norm2d_cx(cx, w_out)
         return cx
 
@@ -78,7 +78,7 @@ class StemImageNet(Module):
 class MBConv(Module):
     """MobileNetV3 inverted bottleneck block"""
 
-    def __init__(self, w_in, exp_s, stride, w_out, nl, se):
+    def __init__(self, w_in, exp_s, stride, w_out, nl, se, ks):
         # Expansion, 3x3 depthwise, BN, AF, 1x1 pointwise, BN, skip_connection
         super(MBConv, self).__init__()
         self.stride = stride
@@ -86,6 +86,7 @@ class MBConv(Module):
         self.exp = None
         self.se = se
         self.exp_s = exp_s
+        self.ks = ks
         # w_exp = int(w_in * exp_r)  # expand channel using expansion factor(exp_r)
         if exp_s != w_in:  # skip if exp_r is 1
             self.exp = conv2d(w_in, exp_s, 1)
@@ -93,7 +94,8 @@ class MBConv(Module):
             self.exp_af = nn.Hardswish(
                 inplace=cfg.MODEL.ACTIVATION_INPLACE) if nl == 1 else activation()
         # depthwise
-        self.dwise = conv2d(exp_s, exp_s, 3, stride=stride, groups=exp_s)
+        self.dwise = conv2d(exp_s, exp_s, kernel_size=ks,
+                            stride=stride, padding=ks//2, groups=exp_s)
         self.dwise_bn = norm2d(exp_s)
         self.dwise_af = nn.Hardswish(
             inplace=cfg.MODEL.ACTIVATION_INPLACE) if nl == 1 else activation()
@@ -150,10 +152,10 @@ class MBConv(Module):
 class MNV3Stage(Module):
     """MobileNetV3 stage."""
 
-    def __init__(self, w_in, exp_s, stride, w_out, nl, se):
+    def __init__(self, w_in, exp_s, stride, w_out, nl, se, ks):
         super(MNV3Stage, self).__init__()
         stride = stride
-        block = MBConv(w_in, exp_s, stride, w_out, nl, se)
+        block = MBConv(w_in, exp_s, stride, w_out, nl, se, ks)
         self.add_module("b{}".format(1), block)
         stride, w_in = 1, w_out
 
@@ -244,13 +246,14 @@ class MobileNetV3(Module):
                        200, 184, 184, 480, 672, 672, 960, 960]
         p["nl"] = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
         p["se"] = [0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1]
-        vs = ["sw", "ws", "ss", "hw", "nc", "exp_sz", "nl", "se"]
-        sw, ws, ss, hw, nc, exp_sz, nl, se = [p[v] for v in vs]
-        stage_params = list(zip(ws, ss, exp_sz, nl, se))
+        p["ks"] = [3, 3, 3, 5, 5, 5, 3, 3, 3, 3, 3, 3, 5, 5, 5]
+        vs = ["sw", "ws", "ss", "hw", "nc", "exp_sz", "nl", "se", "ks"]
+        sw, ws, ss, hw, nc, exp_sz, nl, se, ks = [p[v] for v in vs]
+        stage_params = list(zip(ws, ss, exp_sz, nl, se, ks))
         self.stem = StemImageNet(3, sw)
         prev_w = sw
         for i, (w, stride, exp_s, nl, se) in enumerate(stage_params):
-            stage = MNV3Stage(prev_w, exp_s, stride, w, nl, se)
+            stage = MNV3Stage(prev_w, exp_s, stride, w, nl, se, ks)
             self.add_module("s{}".format(i + 1), stage)
             prev_w = w
         self.head = MNV3Head(prev_w, hw, nc, exp_s)
