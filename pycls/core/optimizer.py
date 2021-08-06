@@ -9,13 +9,29 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
 from pycls.core.config import cfg
+from pycls.utils import str_to_class
 
 
-def construct_optimizer(
-    model, params=None, train_weight=True, train_bn=True, train_scale=True
-):
+def __get_optimizer_cls():
+    return str_to_class("torch.optim", cfg.OPTIM.CLASS)
+
+
+def optimizer_args():
+    if cfg.OPTIM.CLASS == "SGD":
+        return {
+            "lr": cfg.OPTIM.BASE_LR,
+            "momentum": cfg.OPTIM.MOMENTUM,
+            "weight_decay": cfg.OPTIM.WEIGHT_DECAY,
+            "dampening": cfg.OPTIM.DAMPENING,
+            "nesterov": cfg.OPTIM.NESTEROV,
+        }
+    elif cfg.OPTIM.CLASS in ("Adam", "AdamW"):
+        return {}
+    raise NotImplementedError
+
+
+def construct_optimizer(model, params=None, **args):
     """Constructs the optimizer.
 
     Note that the momentum update in PyTorch differs from the one in Caffe2.
@@ -47,41 +63,12 @@ def construct_optimizer(
     else:
         optim_params = model.parameters()
 
-    if params is None:
-        optimizer = torch.optim.SGD(
-            optim_params,
-            lr=cfg.OPTIM.BASE_LR,
-            momentum=cfg.OPTIM.MOMENTUM,
-            weight_decay=cfg.OPTIM.WEIGHT_DECAY,
-            dampening=cfg.OPTIM.DAMPENING,
-            nesterov=cfg.OPTIM.NESTEROV,
-        )
+    optimizer_cls = __get_optimizer_cls()
+    if params:
+        return optimizer_cls(params, **args)
     else:
-        w_params, b_params, s_params = params
-        optimizer = torch.optim.SGD(
-            [
-                {
-                    "params": w_params,
-                    "weight_decay": cfg.OPTIM.WEIGHT_DECAY,
-                    "lr": cfg.OPTIM.BASE_LR if train_weight else 0,
-                },
-                {
-                    "params": b_params,
-                    "weight_decay": 0,
-                    "lr": cfg.OPTIM.BASE_LR if train_bn else 0,
-                },
-                {
-                    "params": s_params,
-                    "weight_decay": 0,
-                    "lr": cfg.OPTIM.BASE_LR if train_scale else 0,
-                },
-            ],
-            momentum=cfg.OPTIM.MOMENTUM,
-            dampening=cfg.OPTIM.DAMPENING,
-            nesterov=cfg.OPTIM.NESTEROV,
-        )
-
-    return optimizer
+        args = optimizer_args()
+        return optimizer_cls(optim_params, **args)
 
 
 def lr_fun_steps(cur_epoch):

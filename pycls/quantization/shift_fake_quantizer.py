@@ -71,6 +71,7 @@ class ShiftFakeQuantize(FakeQuantizeBase):
             self.zero_point.copy_(_zero_point)
             self.scale.data.fill_(self.scale_act.inverse(_scale[0]))
 
+        Y = X
         if self.fake_quant_enabled[0] == 1:
             s = ShiftScaleQuant.apply(self.scale_act.apply(self.scale))
             Y = torch._fake_quantize_learnable_per_tensor_affine(

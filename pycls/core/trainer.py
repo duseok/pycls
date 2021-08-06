@@ -34,15 +34,29 @@ def get_kd_loss(output, output_t):
     )
 
 
+def default_lr_sched_func(optimizer, cur_epoch):
+    lr = optim.get_epoch_lr(cur_epoch)
+    optim.set_lr(optimizer, lr)
+    return lr, None
+
+
 def train_epoch(
-    loader, model, ema, loss_fun, optimizer, scaler, meter, cur_epoch, teacher=None
+    loader,
+    model,
+    ema,
+    loss_fun,
+    optimizer,
+    scaler,
+    meter,
+    cur_epoch,
+    lr_sched_func=default_lr_sched_func,
+    teacher=None,
 ):
     """Performs one epoch of training."""
     # Shuffle the data
     data_loader.shuffle(loader, cur_epoch)
     # Update the learning rate
-    lr = optim.get_epoch_lr(cur_epoch)
-    optim.set_lr(optimizer, lr)
+    weight_lr, scale_lr = lr_sched_func(optimizer, cur_epoch)
     # Enable training mode
     model.train()
     ema.train()
@@ -80,7 +94,7 @@ def train_epoch(
         meter.iter_toc()
         # Update and log stats
         mb_size = inputs.size(0) * cfg.NUM_GPUS
-        meter.update_stats(top1_err, top5_err, loss, lr, mb_size)
+        meter.update_stats(top1_err, top5_err, loss, weight_lr, mb_size, scale_lr)
         meter.log_iter_stats(cur_epoch, cur_iter)
         meter.iter_tic()
     # Log epoch stats
@@ -156,7 +170,7 @@ def train_model():
     for cur_epoch in range(start_epoch, cfg.OPTIM.MAX_EPOCH):
         # Train for one epoch
         params = (train_loader, model, ema, loss_fun, optimizer, scaler, train_meter)
-        train_epoch(*params, cur_epoch, teacher)
+        train_epoch(*params, cur_epoch, default_lr_sched_func, teacher)
         # Compute precise BN stats
         if cfg.BN.USE_PRECISE_STATS:
             net.compute_precise_bn_stats(model, train_loader)

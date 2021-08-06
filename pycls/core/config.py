@@ -67,6 +67,9 @@ _C.QUANTIZATION.METHOD = (
 # ---------------------------------- QAT options ----------------------------------- #
 _C.QUANTIZATION.QAT = CfgNode()
 
+# Base learning rate for training scale
+_C.QUANTIZATION.QAT.SCALE_LR = 0.0
+
 # Activation function for scale from {'softplus', 'sigmoid'}
 _C.QUANTIZATION.QAT.SCALE_ACT = "softplus"
 
@@ -299,6 +302,9 @@ _C.OPTIM = CfgNode()
 # Learning rate ranges from BASE_LR to MIN_LR*BASE_LR according to the LR_POLICY
 _C.OPTIM.BASE_LR = 0.1
 _C.OPTIM.MIN_LR = 0.0
+
+# Optimizer class
+_C.OPTIM.CLASS = "SGD"
 
 # Learning rate policy select from {'cos', 'exp', 'lin', 'steps'}
 _C.OPTIM.LR_POLICY = "cos"

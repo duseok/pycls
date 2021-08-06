@@ -23,6 +23,7 @@ from pycls.core.setup import (
 )
 from pycls.quantization.quant_op import QConvBn2d
 from pycls.quantization.scale_activation import get_scale_act
+from pycls.utils import static_vars
 from torch.optim.optimizer import Optimizer
 
 if TYPE_CHECKING:
@@ -248,6 +249,42 @@ def train_qat_network():
     )
 
 
+def get_optimizer_params(all_params, bn_stab: bool = False):
+    w_param, bn_param, s_param = all_params
+    params = [
+        {
+            "params": w_param,
+            "weight_decay": cfg.OPTIM.WEIGHT_DECAY,
+            "lr": 0 if bn_stab else cfg.OPTIM.BASE_LR,
+        },
+        {
+            "params": bn_param,
+            "weight_decay": cfg.OPTIM.WEIGHT_DECAY,
+            "lr": cfg.OPTIM.BASE_LR,
+        },
+        {
+            "params": s_param,
+            "weight_decay": 0,
+            "lr": cfg.OPTIM.BASE_LR
+            if cfg.QUANTIZATION.QAT.SCALE_LR == 0.0
+            else cfg.QUANTIZATION.QAT.SCALE_LR,
+        },
+    ]
+
+    if cfg.OPTIM.CLASS == "SGD":
+        args = {
+            "momentum": cfg.OPTIM.MOMENTUM,
+            "dampening": cfg.OPTIM.DAMPENING,
+            "nesterov": cfg.OPTIM.NESTEROV,
+        }
+    elif cfg.OPTIM.CLASS in ("Adam", "AdamW"):
+        args = {}
+    else:
+        raise NotImplementedError
+
+    return params, args
+
+
 def _run_qat_newtork(
     model: Module,
     ema: Module,
@@ -263,10 +300,12 @@ def _run_qat_newtork(
     ema_meter: meters.TrainMeter,
     checkpoint_file: str,
 ):
-    train_params = _categorize_params(model)
+    # w_param, bn_param, s_param = _categorize_params(model)
+    all_params = _categorize_params(model)
     step = start_step
     if step == "1_bn_stabilization":
-        stabilize_opt = optim.construct_optimizer(model, train_params, False)
+        params, args = get_optimizer_params(all_params, True)
+        stabilize_opt = optim.construct_optimizer(model, params, **args)
         if checkpoint_file:
             model, ema = _load_checkpoint(checkpoint_file, model, ema, stabilize_opt)
         logger.info("Start first BN stabilization (Epoch: {})".format(start_epoch + 1))
@@ -289,7 +328,8 @@ def _run_qat_newtork(
         step = "2_finetune"
 
     if step == "2_finetune":
-        optimizer = optim.construct_optimizer(model, train_params)
+        params, args = get_optimizer_params(all_params)
+        optimizer = optim.construct_optimizer(model, params, **args)
         if start_step == "2_finetune" and checkpoint_file:
             model, ema = _load_checkpoint(checkpoint_file, model, ema, optimizer)
         logger.info("Start finetuing (Epoch: {})".format(start_epoch + 1))
@@ -313,7 +353,8 @@ def _run_qat_newtork(
         step = "3_bn_stabilization"
 
     if step == "3_bn_stabilization":
-        stabilize_opt = optim.construct_optimizer(model, train_params, False)
+        params, args = get_optimizer_params(all_params, True)
+        stabilize_opt = optim.construct_optimizer(model, params, **args)
         if start_step == "3_bn_stabilization" and checkpoint_file:
             model, ema = _load_checkpoint(checkpoint_file, model, ema, stabilize_opt)
         logger.info("Start second BN stabilization (Epoch: {})".format(start_epoch + 1))
@@ -332,6 +373,33 @@ def _run_qat_newtork(
             ema_meter,
             prefix="3_bn_stabilization_",
         )
+
+
+@static_vars(prev_wlr=0.0, prev_slr=0.0)
+def qat_lr_sched_func(optimizer, cur_epoch):
+    ratio = optim.get_lr_fun()(cur_epoch)
+    weight_lr = cfg.OPTIM.BASE_LR * ratio
+    scale_lr = cfg.QUANTIZATION.QAT.SCALE_LR * ratio
+
+    if cur_epoch == 0:
+        qat_lr_sched_func.prev_wlr = cfg.OPTIM.BASE_LR
+        qat_lr_sched_func.prev_slr = cfg.QUANTIZATION.QAT.SCALE_LR
+
+    # Linear warmup
+    if cur_epoch < cfg.OPTIM.WARMUP_EPOCHS:
+        alpha = cur_epoch / cfg.OPTIM.WARMUP_EPOCHS
+        warmup_factor = cfg.OPTIM.WARMUP_FACTOR * (1.0 - alpha) + alpha
+        weight_lr *= warmup_factor
+        scale_lr *= warmup_factor
+
+    for param_group in optimizer.param_groups:
+        if param_group["lr"] == qat_lr_sched_func.prev_wlr:
+            param_group["lr"] = weight_lr
+        elif param_group["lr"] == qat_lr_sched_func.prev_slr:
+            param_group["lr"] = scale_lr
+    qat_lr_sched_func.prev_wlr = weight_lr
+    qat_lr_sched_func.prev_slr = scale_lr
+    return weight_lr, scale_lr
 
 
 def _train_qat_newtork(
@@ -354,7 +422,7 @@ def _train_qat_newtork(
     for cur_epoch in range(start_epoch, cfg.OPTIM.MAX_EPOCH):
         # Train for one epoch
         params = (train_loader, model, ema, loss_fun, optimizer, scaler, train_meter)
-        trainer.train_epoch(*params, cur_epoch, teacher)
+        trainer.train_epoch(*params, cur_epoch, qat_lr_sched_func, teacher)
 
         if bn_freeze and cur_epoch >= cfg.QUANTIZATION.QAT.BN_TRAIN_EPOCH - 1:
             model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
