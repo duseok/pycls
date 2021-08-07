@@ -29,7 +29,7 @@ class SELayer(Module):
         self.avg_pool = gap2d(1)
         self.fc1 = linear(channel, make_divisible(
             channel//reduction, 8), bias=True)
-        self.af1 = activation()
+        self.af1 = nn.ReLU(inplace=cfg.MODEL.ACTIVATION_INPLACE)
         self.fc2 = linear(make_divisible(
             channel//reduction, 8), channel, bias=True)
         self.af2 = nn.Hardswish(
@@ -97,14 +97,16 @@ class MBConv(Module):
         self.dwise = conv2d(exp_s, exp_s, k=ks,
                             stride=stride, groups=exp_s)
         self.dwise_bn = norm2d(exp_s)
-        self.dwise_af = nn.Hardswish(
-            inplace=cfg.MODEL.ACTIVATION_INPLACE) if nl == 1 else activation()
         # squeeze-and-excite
         if self.se == 1:
             self.selayer = SELayer(exp_s)
+        self.se_af = nn.Hardswish(
+            inplace=cfg.MODEL.ACTIVATION_INPLACE) if nl == 1 else activation()
+
         # pointwise
         self.lin_proj = conv2d(exp_s, w_out, 1)
         self.lin_proj_bn = norm2d(w_out)
+
         self.use_res_connect = (
             self.stride == 1 and w_in == w_out
         )  # check skip connection
@@ -113,21 +115,22 @@ class MBConv(Module):
 
     def forward(self, x):
         f_x = self.exp_af(self.exp_bn(self.exp(x))) if self.exp else x
-        f_x = self.dwise_af(self.dwise_bn(self.dwise(f_x)))
+        f_x = self.self.dwise_bn(self.dwise(f_x))
         f_x = self.selayer(f_x) if self.se == 1 else f_x
+        f_x = self.se_af(f_x)
         f_x = self.lin_proj_bn(self.lin_proj(f_x))
         if self.use_res_connect:
             f_x = self.skip_add.add(x, f_x)
         return f_x
 
     @staticmethod
-    def complexity(cx, w_in, exp_s, stride, w_out, se):
+    def complexity(cx, w_in, exp_s, ks, stride, w_out, se):
         # w_exp = int(w_in * exp_r)  # expand channel using expansion factor
         if exp_s != w_in:
             cx = conv2d_cx(cx, w_in, exp_s, 1)
             cx = norm2d_cx(cx, exp_s)
         # depthwise
-        cx = conv2d_cx(cx, exp_s, exp_s, 3, stride=stride, groups=exp_s)
+        cx = conv2d_cx(cx, exp_s, exp_s, k=ks, stride=stride, groups=exp_s)
         cx = norm2d_cx(cx, exp_s)
         # squeeze-and-excite
         cx = SELayer.complexity(cx, exp_s) if se == 1 else cx
@@ -165,9 +168,9 @@ class MNV3Stage(Module):
         return x
 
     @staticmethod
-    def complexity(cx, w_in, exp_r, stride, w_out, se):
+    def complexity(cx, w_in, exp_r, stride, w_out, se, ks):
         stride = stride
-        cx = MBConv.complexity(cx, w_in, exp_r, stride, w_out, se)
+        cx = MBConv.complexity(cx, w_in, exp_r, stride, w_out, se, ks)
         stride, w_in = 1, w_out
         return cx
 
@@ -272,13 +275,14 @@ class MobileNetV3(Module):
                        200, 184, 184, 480, 672, 672, 960, 960]
         p["nl"] = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
         p["se"] = [0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1]
-        vs = ["sw", "ws", "ss", "hw", "nc", "exp_sz", "nl", "se"]
-        sw, ws, ss, hw, nc, exp_sz, nl, se = [p[v] for v in vs]
-        stage_params = list(zip(ws, ss, exp_sz, nl, se))
+        p["ks"] = [3, 3, 3, 5, 5, 5, 3, 3, 3, 3, 3, 3, 5, 5, 5]
+        vs = ["sw", "ws", "ss", "hw", "nc", "exp_sz", "nl", "se", "ks"]
+        sw, ws, ss, hw, nc, exp_sz, nl, se, ks = [p[v] for v in vs]
+        stage_params = list(zip(ws, ss, exp_sz, nl, se, ks))
         cx = StemImageNet.complexity(cx, 3, sw)
         prev_w = sw
-        for w, stride, exp_s, nl, se in stage_params:
-            cx = MNV3Stage.complexity(cx, prev_w, exp_s, stride, w, se)
+        for w, stride, exp_s, nl, se, ks in stage_params:
+            cx = MNV3Stage.complexity(cx, prev_w, exp_s, stride, w, se, ks)
             prev_w = w
         cx = MNV3Head.complexity(cx, prev_w, hw, nc)
         return cx
