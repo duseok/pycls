@@ -94,8 +94,8 @@ class MBConv(Module):
             self.exp_af = nn.Hardswish(
                 inplace=cfg.MODEL.ACTIVATION_INPLACE) if nl == 1 else activation()
         # depthwise
-        self.dwise = conv2d(exp_s, exp_s, kernel_size=ks,
-                            stride=stride, padding=ks//2, groups=exp_s)
+        self.dwise = conv2d(exp_s, exp_s, k=ks,
+                            stride=stride, groups=exp_s)
         self.dwise_bn = norm2d(exp_s)
         self.dwise_af = nn.Hardswish(
             inplace=cfg.MODEL.ACTIVATION_INPLACE) if nl == 1 else activation()
@@ -252,7 +252,7 @@ class MobileNetV3(Module):
         stage_params = list(zip(ws, ss, exp_sz, nl, se, ks))
         self.stem = StemImageNet(3, sw)
         prev_w = sw
-        for i, (w, stride, exp_s, nl, se) in enumerate(stage_params):
+        for i, (w, stride, exp_s, nl, se, ks) in enumerate(stage_params):
             stage = MNV3Stage(prev_w, exp_s, stride, w, nl, se, ks)
             self.add_module("s{}".format(i + 1), stage)
             prev_w = w
