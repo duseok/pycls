@@ -115,9 +115,6 @@ _C.QUANTIZATION.QAT.ENABLE_QUANTIZATION_LOSS = False
 # Weight for quantization loss
 _C.QUANTIZATION.QAT.QUANTIZATION_LOSS_ALPHA = 1.0
 
-# If gradient's absolute value is less than this value then back propagate quantization loss
-_C.QUANTIZATION.QAT.QUANTIZATION_LOSS_BETA = 1e-4
-
 
 # ---------------------------------- ResNet options ---------------------------------- #
 _C.RESNET = CfgNode()

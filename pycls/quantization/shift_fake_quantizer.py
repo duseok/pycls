@@ -16,21 +16,6 @@ class ShiftScaleQuant(torch.autograd.Function):
         return grad_output
 
 
-class FakeQuantFunc(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x: torch.Tensor, quant_x: torch.Tensor):
-        ctx.save_for_backward(x - quant_x)
-        return quant_x.clone().detach_()
-
-    @staticmethod
-    def backward(ctx, grad_output: torch.Tensor):
-        diff = ctx.saved_tensors[0]
-        mask_diff = grad_output.abs().lt(cfg.QUANTIZATION.QAT.QUANTIZATION_LOSS_BETA)
-        alpha = cfg.QUANTIZATION.QAT.QUANTIZATION_LOSS_ALPHA
-        grad = 2 * diff.div_(diff.numel()) * mask_diff.int().float() * alpha
-        return grad, grad_output
-
-
 class ShiftFakeQuantize(FakeQuantizeBase):
     scale: Parameter
     zero_point: torch.Tensor
@@ -58,6 +43,7 @@ class ShiftFakeQuantize(FakeQuantizeBase):
         self.dtype = self.activation_post_process.dtype
         self.qscheme = self.activation_post_process.qscheme
         self.scale_act = get_scale_act()
+        self.quant_loss = None
 
     def forward(self, X: torch.Tensor):
         if self.observer_enabled[0] == 1:
@@ -78,7 +64,7 @@ class ShiftFakeQuantize(FakeQuantizeBase):
                 X, s, self.zero_point, self.quant_min, self.quant_max, 1.0
             )
             if cfg.QUANTIZATION.QAT.ENABLE_QUANTIZATION_LOSS:
-                Y = FakeQuantFunc.apply(X, Y)
+                self.quant_loss = torch.mean((X - Y)**2)
         return Y
 
     @torch.jit.export

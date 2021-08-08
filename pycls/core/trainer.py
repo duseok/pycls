@@ -40,6 +40,29 @@ def default_lr_sched_func(optimizer, cur_epoch):
     return lr, None
 
 
+def teacher_student_loss(teacher, inputs, preds):
+    if not teacher:
+        return 0.0
+
+    with torch.no_grad():
+        preds_t = teacher(inputs)
+    loss = get_kd_loss(preds, preds_t)
+    return loss
+
+
+def quant_loss(model: torch.nn.Module):
+    from pycls.quantization.shift_fake_quantizer import ShiftFakeQuantize
+
+    if not cfg.QUANTIZATION.QAT.ENABLE_QUANTIZATION_LOSS:
+        return 0.0
+
+    loss = 0.0
+    for _, m in model.named_modules():
+        if isinstance(m, ShiftFakeQuantize) and m.quant_loss is not None:
+            loss += m.quant_loss
+    return loss
+
+
 def train_epoch(
     loader,
     model,
@@ -70,13 +93,12 @@ def train_epoch(
         # Apply mixup to the batch (no effect if mixup alpha is 0)
         inputs, labels_one_hot, labels = net.mixup(inputs, labels_one_hot)
         # Perform the forward pass and compute the loss
-        if teacher:
-            with torch.no_grad():
-                preds_t = teacher(inputs)
         with amp.autocast(enabled=cfg.TRAIN.MIXED_PRECISION):
             preds = model(inputs)
-            loss = loss_fun(preds, labels_one_hot) + (
-                get_kd_loss(preds, preds_t) if teacher else 0.0
+            loss = (
+                loss_fun(preds, labels_one_hot)
+                + teacher_student_loss(teacher, inputs, preds)
+                + (quant_loss(model) * cfg.QUANTIZATION.QAT.QUANTIZATION_LOSS_ALPHA)
             )
         # Perform the backward pass and update the parameters
         optimizer.zero_grad()
