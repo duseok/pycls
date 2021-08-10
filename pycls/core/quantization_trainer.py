@@ -249,8 +249,13 @@ def train_qat_network():
     )
 
 
-def get_optimizer_params(all_params, bn_stab: bool = False):
+def get_optimizer_params(all_params, bn_stab: bool = False, scale_train: bool = True):
     w_param, bn_param, s_param = all_params
+    scale_lr = (
+        cfg.OPTIM.BASE_LR
+        if cfg.QUANTIZATION.QAT.SCALE_LR == 0.0
+        else cfg.QUANTIZATION.QAT.SCALE_LR
+    )
     params = [
         {
             "params": w_param,
@@ -265,9 +270,7 @@ def get_optimizer_params(all_params, bn_stab: bool = False):
         {
             "params": s_param,
             "weight_decay": 0,
-            "lr": cfg.OPTIM.BASE_LR
-            if cfg.QUANTIZATION.QAT.SCALE_LR == 0.0
-            else cfg.QUANTIZATION.QAT.SCALE_LR,
+            "lr": scale_lr if scale_train else 0,
         },
     ]
 
@@ -328,7 +331,7 @@ def _run_qat_newtork(
         step = "2_finetune"
 
     if step == "2_finetune":
-        params, args = get_optimizer_params(all_params)
+        params, args = get_optimizer_params(all_params, scale_train=False)
         optimizer = optim.construct_optimizer(model, params, **args)
         if start_step == "2_finetune" and checkpoint_file:
             model, ema = _load_checkpoint(checkpoint_file, model, ema, optimizer)
