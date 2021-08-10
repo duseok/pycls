@@ -396,9 +396,9 @@ def qat_lr_sched_func(optimizer, cur_epoch):
         scale_lr *= warmup_factor
 
     for param_group in optimizer.param_groups:
-        if param_group["lr"] == qat_lr_sched_func.prev_wlr:
+        if param_group["lr"] != 0 and param_group["lr"] == qat_lr_sched_func.prev_wlr:
             param_group["lr"] = weight_lr
-        elif param_group["lr"] == qat_lr_sched_func.prev_slr:
+        elif param_group["lr"] != 0 and param_group["lr"] == qat_lr_sched_func.prev_slr:
             param_group["lr"] = scale_lr
     qat_lr_sched_func.prev_wlr = weight_lr
     qat_lr_sched_func.prev_slr = scale_lr
