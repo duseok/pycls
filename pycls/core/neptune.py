@@ -52,4 +52,4 @@ class NeptuneLogger(metaclass=SingletonMeta):
         self.nt[name].log(value)
 
     def sync(self):
-        self.nt.sync()
+        self.nt.sync(wait=False)
