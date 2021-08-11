@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn.intrinsic.qat as nniqat
 from pycls.core.config import cfg
+from pycls.quantization.scale_activation import get_scale_act
 from torch.nn.qat import Conv2d, Linear
 from torch.quantization.quantize import register_activation_post_process_hook
 
@@ -10,7 +11,7 @@ from torch.quantization.quantize import register_activation_post_process_hook
 class ShiftScaleQuant(torch.autograd.Function):
     @staticmethod
     def forward(ctx, s):
-        return torch.exp2(torch.log2(s).round())
+        return torch.exp2(torch.log2(s).ceil())
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -56,6 +57,7 @@ class QConvBn2d(nniqat.ConvBn2d):
             qconfig,
         )
         self.quant_bias = False
+        self.scale_act = get_scale_act()
 
     def set_quant_bias(self, quant_bias):
         self.quant_bias = quant_bias
@@ -82,7 +84,7 @@ class QConvBn2d(nniqat.ConvBn2d):
         qbias = self.bias
         if self.bias is not None and self.quant_bias:
             scale = ShiftScaleQuant.apply(
-                F.softplus(self.activation_post_process.scale)
+                self.scale_act.apply(self.activation_post_process.scale)
             )
             qbias = torch._fake_quantize_learnable_per_tensor_affine(
                 self.bias,
@@ -155,6 +157,7 @@ class QConv2d(Conv2d):
             dtype=dtype,
         )
         self.quant_bias = False
+        self.scale_act = get_scale_act()
 
     def set_quant_bias(self, quant_bias):
         self.quant_bias = quant_bias
@@ -164,7 +167,7 @@ class QConv2d(Conv2d):
         qbias = self.bias
         if self.bias is not None and self.quant_bias:
             scale = ShiftScaleQuant.apply(
-                F.softplus(self.activation_post_process.scale)
+                self.scale_act.apply(self.activation_post_process.scale)
             )
             qbias = torch._fake_quantize_learnable_per_tensor_affine(
                 self.bias,
@@ -196,6 +199,7 @@ class QLinear(Linear):
             dtype=dtype,
         )
         self.quant_bias = False
+        self.scale_act = get_scale_act()
 
     def set_quant_bias(self, quant_bias):
         self.quant_bias = quant_bias
@@ -205,7 +209,7 @@ class QLinear(Linear):
         qbias = self.bias
         if self.bias is not None and self.quant_bias:
             scale = ShiftScaleQuant.apply(
-                F.softplus(self.activation_post_process.scale)
+                self.scale_act.apply(self.activation_post_process.scale)
             )
             qbias = torch._fake_quantize_learnable_per_tensor_affine(
                 self.bias,

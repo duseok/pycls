@@ -9,7 +9,7 @@ from torch.quantization.fake_quantize import FakeQuantizeBase
 class ShiftScaleQuant(torch.autograd.Function):
     @staticmethod
     def forward(ctx, s):
-        return torch.exp2(torch.log2(s).round())
+        return torch.exp2(torch.log2(s).ceil())
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -64,7 +64,7 @@ class ShiftFakeQuantize(FakeQuantizeBase):
                 X, s, self.zero_point, self.quant_min, self.quant_max, 1.0
             )
             if cfg.QUANTIZATION.QAT.ENABLE_QUANTIZATION_LOSS:
-                self.quant_loss = torch.mean((X - Y)**2)
+                self.quant_loss = torch.mean((X - Y) ** 2)
         return Y
 
     @torch.jit.export
@@ -73,7 +73,7 @@ class ShiftFakeQuantize(FakeQuantizeBase):
 
     @torch.jit.export
     def extra_repr(self):
-        scale = torch.exp2(torch.log2(self.scale_act.apply(self.scale)).round())
+        scale = torch.exp2(torch.log2(self.scale_act.apply(self.scale)).ceil())
         return (
             "fake_quant_enabled={}, observer_enabled={}, "
             "quant_min={}, quant_max={}, dtype={}, qscheme={}, "

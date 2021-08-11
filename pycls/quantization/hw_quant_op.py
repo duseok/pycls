@@ -183,7 +183,10 @@ class HWQMaxPool2d(nn.MaxPool2d):
 
 
 def _get_shift_scale_value(s):
-    return torch.exp2(torch.log2(F.softplus(s)).round_()).cuda()
+    from pycls.quantization.scale_activation import get_scale_act
+
+    scale_act = get_scale_act()
+    return torch.exp2(torch.log2(scale_act.apply(s)).ceil_()).cuda()
 
 
 def _quant_tensor(t: Tensor, s):
