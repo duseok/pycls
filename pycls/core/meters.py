@@ -272,4 +272,5 @@ class TestMeter(object):
         if dist.is_master_proc() and cfg.USE_NEPTUNE:
             nt_logger = NeptuneLogger()
             nt_logger.log(f"TEST/{self.phase}/Top1.Err", stats["top1_err"])
+            nt_logger.sync()
         logger.info(logging.dump_log_data(stats, self.phase + "_epoch"))
