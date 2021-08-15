@@ -21,6 +21,15 @@ from torch.nn.quantized import FloatFunctional
 from torch.quantization import fuse_modules
 
 
+class h_sigmoid(Module):
+    def __init__(self, inplace=True):
+        super(h_sigmoid, self).__init__()
+        self.relu = nn.ReLU6(inplace=inplace)
+
+    def forward(self, x):
+        return self.relu(x + 3) / 6
+
+
 class SELayer(Module):
     """MobileNetV3 inverted sqeeze-and-excite"""
 
@@ -32,8 +41,7 @@ class SELayer(Module):
         self.af1 = nn.ReLU(inplace=cfg.MODEL.ACTIVATION_INPLACE)
         self.fc2 = linear(make_divisible(
             channel//reduction, 8), channel, bias=True)
-        self.af2 = nn.Hardswish(
-            inplace=cfg.MODEL.ACTIVATION_INPLACE)
+        self.af2 = h_sigmoid()
 
     def forward(self, x):
         b, c, _, _ = x.size()
@@ -115,7 +123,7 @@ class MBConv(Module):
 
     def forward(self, x):
         f_x = self.exp_af(self.exp_bn(self.exp(x))) if self.exp else x
-        f_x = self.self.dwise_bn(self.dwise(f_x))
+        f_x = self.dwise_bn(self.dwise(f_x))
         f_x = self.selayer(f_x) if self.se == 1 else f_x
         f_x = self.se_af(f_x)
         f_x = self.lin_proj_bn(self.lin_proj(f_x))
@@ -124,7 +132,7 @@ class MBConv(Module):
         return f_x
 
     @staticmethod
-    def complexity(cx, w_in, exp_s, ks, stride, w_out, se):
+    def complexity(cx, w_in, exp_s, stride, w_out, se, ks):
         # w_exp = int(w_in * exp_r)  # expand channel using expansion factor
         if exp_s != w_in:
             cx = conv2d_cx(cx, w_in, exp_s, 1)
@@ -206,10 +214,11 @@ class MNV3Head(Module):
         return x
 
     @staticmethod
-    def complexity(cx, w_in, w_out, num_classes):
+    def complexity(cx, w_in, w_out, num_classes, exp_s):
         cx = conv2d_cx(cx, w_in, w_out, 1)
         cx = norm2d_cx(cx, w_out)
         cx = gap2d_cx(cx, w_out)
+        cx = linear_cx(cx, exp_s, w_out, bias=True)
         cx = linear_cx(cx, w_out, num_classes, bias=True)
         return cx
 
@@ -284,7 +293,7 @@ class MobileNetV3(Module):
         for w, stride, exp_s, nl, se, ks in stage_params:
             cx = MNV3Stage.complexity(cx, prev_w, exp_s, stride, w, se, ks)
             prev_w = w
-        cx = MNV3Head.complexity(cx, prev_w, hw, nc)
+        cx = MNV3Head.complexity(cx, prev_w, hw, nc, exp_s)
         return cx
 
     def fuse_model(self, include_relu: bool = False):
