@@ -159,18 +159,20 @@ class RoundQuant(torch.autograd.Function):
 
 
 class HWQAvgPool2d(nn.Module):
-    def __init__(self, *args, **kargs):
+    def __init__(self, prev_post_process, *args, **kargs):
         super(HWQAvgPool2d, self).__init__(*args, **kargs)
         self.divisor_override = 1
+        self.prev_post_process = prev_post_process
 
-    def forward(self, x):
-        y = torch.sum(x, (2, 3), keepdim=True)
+    def forward(self, x: Tensor):
+        s = _get_shift_scale_value(self.prev_post_process.scale)
+        y = torch.sum(x.div(s), (2, 3), keepdim=True)
         size = np.exp2(np.ceil(np.log2(x.shape[-1] * x.shape[-2])))
-        return RoundQuant.apply(y.div(size))
+        return RoundQuant.apply(y.div_(size)).mul(s)
 
     @classmethod
-    def from_trained_op(cls, op=None):
-        return cls()
+    def from_trained_op(cls, prev_post_process):
+        return cls(prev_post_process)
 
 
 class HWQMaxPool2d(nn.MaxPool2d):

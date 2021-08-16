@@ -303,7 +303,6 @@ def _run_qat_newtork(
     ema_meter: meters.TrainMeter,
     checkpoint_file: str,
 ):
-    # w_param, bn_param, s_param = _categorize_params(model)
     all_params = _categorize_params(model)
     step = start_step
     if step == "1_bn_stabilization":
