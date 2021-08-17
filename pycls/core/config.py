@@ -73,6 +73,9 @@ _C.QUANTIZATION.QAT.SCALE_LR = 0.0
 # Activation function for scale from {'softplus', 'sigmoid'}
 _C.QUANTIZATION.QAT.SCALE_ACT = "softplus"
 
+# Always train scale value (if this value is false, only bn stabilzation step trains scale value)
+_C.QUANTIZATION.QAT.ALWAYS_TRAIN_SCALE = False
+
 # Weights to start training from
 _C.QUANTIZATION.QAT.FP32_WEIGHTS = ""
 

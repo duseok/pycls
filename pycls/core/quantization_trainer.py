@@ -267,11 +267,7 @@ def get_optimizer_params(all_params, bn_stab: bool = False, scale_train: bool = 
             "weight_decay": cfg.OPTIM.WEIGHT_DECAY,
             "lr": cfg.OPTIM.BASE_LR,
         },
-        {
-            "params": s_param,
-            "weight_decay": 0,
-            "lr": scale_lr if scale_train else 0,
-        },
+        {"params": s_param, "weight_decay": 0, "lr": scale_lr if scale_train else 0},
     ]
 
     if cfg.OPTIM.CLASS == "SGD":
@@ -330,7 +326,8 @@ def _run_qat_newtork(
         step = "2_finetune"
 
     if step == "2_finetune":
-        params, args = get_optimizer_params(all_params, scale_train=False)
+        scale_train = cfg.QUANTIZATION.QAT.ALWAYS_TRAIN_SCALE
+        params, args = get_optimizer_params(all_params, scale_train=scale_train)
         optimizer = optim.construct_optimizer(model, params, **args)
         if start_step == "2_finetune" and checkpoint_file:
             model, ema = _load_checkpoint(checkpoint_file, model, ema, optimizer)
