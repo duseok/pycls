@@ -39,7 +39,7 @@ class SELayer(Module):
         self.fc1 = nn.Conv2d(channel, make_divisible(channel//reduction, 8), 1)
         self.af1 = nn.ReLU(inplace=True)
         self.fc2 = nn.Conv2d(make_divisible(channel//reduction, 8), channel, 1)
-        self.af2 = F.hardsigmoid(inplace=True)
+        self.af2 = nn.Hardsigmoid(inplace=True)
 
     def forward(self, x):
         # b, c, _, _ = x.size()
