@@ -19,42 +19,41 @@ from pycls.models.blocks import (
 from torch.nn import Dropout, Module
 from torch.nn.quantized import FloatFunctional
 from torch.quantization import fuse_modules
-
-
-class h_sigmoid(Module):
-    def __init__(self, inplace=True):
-        super(h_sigmoid, self).__init__()
-        self.relu = nn.ReLU6(inplace=inplace)
-
-    def forward(self, x):
-        return self.relu(x + 3) / 6
+from torch.nn import functional as F
 
 
 class SELayer(Module):
     """MobileNetV3 inverted sqeeze-and-excite"""
 
     def __init__(self, channel, reduction=4):
-        super(SELayer, self).__init__()
+        # super().__init__()
+        # self.avg_pool = gap2d(1)
+        # self.fc1 = linear(channel, make_divisible(
+        #     channel//reduction, 8), bias=True)
+        # self.af1 = nn.ReLU(inplace=True)
+        # self.fc2 = linear(make_divisible(
+        #     channel//reduction, 8), channel, bias=True)
+        # self.af2 = F.hardsigmoid(inplace=inplace)
+        super().__init__()
         self.avg_pool = gap2d(1)
-        self.fc1 = linear(channel, make_divisible(
-            channel//reduction, 8), bias=True)
-        self.af1 = nn.ReLU(inplace=cfg.MODEL.ACTIVATION_INPLACE)
-        self.fc2 = linear(make_divisible(
-            channel//reduction, 8), channel, bias=True)
-        self.af2 = h_sigmoid()
+        self.fc1 = nn.Conv2d(channel, make_divisible(channel//reduction, 8), 1)
+        self.af1 = nn.ReLU(inplace=True)
+        self.fc2 = nn.Conv2d(make_divisible(channel//reduction, 8), channel, 1)
+        self.af2 = F.hardsigmoid(inplace=True)
 
     def forward(self, x):
-        b, c, _, _ = x.size()
-        se = self.avg_pool(x).view(b, c)
-        se = self.af2(self.fc2(self.af1(self.fc1(se)))).view(b, c, 1, 1)
+        # b, c, _, _ = x.size()
+        # se = self.avg_pool(x).view(b, c)
+        # se = self.af2(self.fc2(self.af1(self.fc1(se)))).view(b, c, 1, 1)
+        se = self.af2(self.fc2(self.af1(self.fc1(self.avg_pool(x)))))
         return x * se
 
     @staticmethod
     def complexity(cx, channel, reduction=4):
         cx = gap2d_cx(cx, 1)
-        cx = linear_cx(cx, channel, make_divisible(
+        cx = conv2d_cx(cx, channel, make_divisible(
             channel//reduction, 8), bias=True)
-        cx = linear_cx(cx, make_divisible(
+        cx = conv2d_cx(cx, make_divisible(
             channel//reduction, 8), channel, bias=True)
         return cx
 
@@ -95,22 +94,19 @@ class MBConv(Module):
         self.se = se
         self.exp_s = exp_s
         self.ks = ks
-        # w_exp = int(w_in * exp_r)  # expand channel using expansion factor(exp_r)
+        # expand
         if exp_s != w_in:  # skip if exp_r is 1
             self.exp = conv2d(w_in, exp_s, 1)
             self.exp_bn = norm2d(exp_s)
-            self.exp_af = nn.Hardswish(
-                inplace=cfg.MODEL.ACTIVATION_INPLACE) if nl == 1 else activation()
+            self.exp_af = nn.Hardswish() if nl == 1 else nn.ReLU6()
         # depthwise
         self.dwise = conv2d(exp_s, exp_s, k=ks,
                             stride=stride, groups=exp_s)
         self.dwise_bn = norm2d(exp_s)
+        self.dwise_af = nn.Hardswish() if nl == 1 else nn.ReLU6()
         # squeeze-and-excite
         if self.se == 1:
             self.selayer = SELayer(exp_s)
-        self.se_af = nn.Hardswish(
-            inplace=cfg.MODEL.ACTIVATION_INPLACE) if nl == 1 else activation()
-
         # pointwise
         self.lin_proj = conv2d(exp_s, w_out, 1)
         self.lin_proj_bn = norm2d(w_out)
@@ -123,9 +119,8 @@ class MBConv(Module):
 
     def forward(self, x):
         f_x = self.exp_af(self.exp_bn(self.exp(x))) if self.exp else x
-        f_x = self.dwise_bn(self.dwise(f_x))
+        f_x = self.dwise_af(self.dwise_bn(self.dwise(f_x)))
         f_x = self.selayer(f_x) if self.se == 1 else f_x
-        f_x = self.se_af(f_x)
         f_x = self.lin_proj_bn(self.lin_proj(f_x))
         if self.use_res_connect:
             f_x = self.skip_add.add(x, f_x)
@@ -196,10 +191,11 @@ class MNV3Head(Module):
         dropout_ratio = cfg.MNV2.DROPOUT_RATIO
         self.conv = conv2d(w_in, exp_s, 1)
         self.conv_bn = norm2d(exp_s)
-        self.conv_af = nn.Hardswish(inplace=cfg.MODEL.ACTIVATION_INPLACE)
+        self.conv_af = nn.Hardswish(inplace=True)
         self.avg_pool = gap2d(exp_s)
         # classifier
         self.fc1 = linear(exp_s, w_out, bias=True)
+        self.cf_af = nn.Hardswish(inplace=True)
         self.dropout = Dropout(p=dropout_ratio) if dropout_ratio > 0 else None
         self.fc2 = linear(w_out, num_classes, bias=True)
 
@@ -207,8 +203,7 @@ class MNV3Head(Module):
         x = self.conv_af(self.conv_bn(self.conv(x)))
         x = self.avg_pool(x)
         x = x.view(x.size(0), -1)
-        x = self.fc1(x)
-        x = self.conv_af(x)
+        x = self.cf_af(self.fc1(x))
         x = self.dropout(x) if self.dropout else x
         x = self.fc2(x)
         return x
