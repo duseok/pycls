@@ -51,10 +51,8 @@ class SELayer(Module):
     @staticmethod
     def complexity(cx, channel, reduction=4):
         cx = gap2d_cx(cx, 1)
-        cx = conv2d_cx(cx, channel, make_divisible(
-            channel//reduction, 8), bias=True)
-        cx = conv2d_cx(cx, make_divisible(
-            channel//reduction, 8), channel, bias=True)
+        cx = conv2d_cx(cx, channel, make_divisible(channel//reduction, 8), 1)
+        cx = conv2d_cx(cx, make_divisible(channel//reduction, 8), channel, 1)
         return cx
 
 
