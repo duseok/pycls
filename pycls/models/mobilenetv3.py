@@ -96,12 +96,12 @@ class MBConv(Module):
         if exp_s != w_in:  # skip if exp_r is 1
             self.exp = conv2d(w_in, exp_s, 1)
             self.exp_bn = norm2d(exp_s)
-            self.exp_af = nn.Hardswish() if nl == 1 else nn.ReLU6()
+            self.exp_af = nn.Hardswish() if nl == 1 else nn.ReLU()
         # depthwise
         self.dwise = conv2d(exp_s, exp_s, k=ks,
                             stride=stride, groups=exp_s)
         self.dwise_bn = norm2d(exp_s)
-        self.dwise_af = nn.Hardswish() if nl == 1 else nn.ReLU6()
+        self.dwise_af = nn.Hardswish() if nl == 1 else nn.ReLU()
         # squeeze-and-excite
         if self.se == 1:
             self.selayer = SELayer(exp_s)
