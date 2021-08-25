@@ -22,6 +22,24 @@ from torch.quantization import fuse_modules
 from torch.nn import functional as F
 
 
+class h_sigmoid(Module):
+    def __init__(self, inplace=True):
+        super(h_sigmoid, self).__init__()
+        self.relu = nn.ReLU6(inplace=inplace)
+
+    def forward(self, x):
+        return self.relu(x+3)/6
+
+
+class h_swish(Module):
+    def __init__(self, inplace=True):
+        super(h_swish, self).__init__()
+        self.sigmoid = h_sigmoid(inplace=inplace)
+
+    def forward(self, x):
+        return x * self.sigmoid(inplace=inplace)
+
+
 class SELayer(Module):
     """MobileNetV3 inverted sqeeze-and-excite"""
 
@@ -39,7 +57,7 @@ class SELayer(Module):
         self.fc1 = nn.Conv2d(channel, make_divisible(channel//reduction, 8), 1)
         self.af1 = nn.ReLU(inplace=True)
         self.fc2 = nn.Conv2d(make_divisible(channel//reduction, 8), channel, 1)
-        self.af2 = nn.Hardsigmoid(inplace=True)
+        self.af2 = h_sigmoid()
 
     def forward(self, x):
         # b, c, _, _ = x.size()
@@ -63,7 +81,7 @@ class StemImageNet(Module):
         super(StemImageNet, self).__init__()
         self.conv = conv2d(w_in, w_out, 3, stride=2)
         self.bn = norm2d(w_out)
-        self.af = nn.Hardswish(inplace=cfg.MODEL.ACTIVATION_INPLACE)
+        self.af = h_swish()
 
     def forward(self, x):
         x = self.af(self.bn(self.conv(x)))
@@ -96,12 +114,12 @@ class MBConv(Module):
         if exp_s != w_in:  # skip if exp_r is 1
             self.exp = conv2d(w_in, exp_s, 1)
             self.exp_bn = norm2d(exp_s)
-            self.exp_af = nn.Hardswish() if nl == 1 else nn.ReLU()
+            self.exp_af = h_swish() if nl == 1 else nn.ReLU()
         # depthwise
         self.dwise = conv2d(exp_s, exp_s, k=ks,
                             stride=stride, groups=exp_s)
         self.dwise_bn = norm2d(exp_s)
-        self.dwise_af = nn.Hardswish() if nl == 1 else nn.ReLU()
+        self.dwise_af = h_swish() if nl == 1 else nn.ReLU()
         # squeeze-and-excite
         if self.se == 1:
             self.selayer = SELayer(exp_s)
@@ -189,11 +207,11 @@ class MNV3Head(Module):
         dropout_ratio = cfg.MNV2.DROPOUT_RATIO
         self.conv = conv2d(w_in, exp_s, 1)
         self.conv_bn = norm2d(exp_s)
-        self.conv_af = nn.Hardswish(inplace=True)
+        self.conv_af = h_swish()
         self.avg_pool = gap2d(exp_s)
         # classifier
         self.fc1 = linear(exp_s, w_out, bias=True)
-        self.cf_af = nn.Hardswish(inplace=True)
+        self.cf_af = h_swish()
         self.dropout = Dropout(p=dropout_ratio) if dropout_ratio > 0 else None
         self.fc2 = linear(w_out, num_classes, bias=True)
 
