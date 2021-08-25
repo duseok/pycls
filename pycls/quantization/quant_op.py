@@ -94,6 +94,7 @@ class QConvBn2d(nniqat.ConvBn2d):
                 int(np.exp2(cfg.QUANTIZATION.QAT.ACT_BITWIDTH - 1) - 1),
                 1.0,
             )
+        if self.bias is not None:
             conv_orig = conv_orig + qbias.reshape(bias_shape)
         conv = self.bn(conv_orig)
         return conv

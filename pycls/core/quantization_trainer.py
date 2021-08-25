@@ -154,6 +154,33 @@ def _correct_quant_param(module):
             _correct_quant_param(m)
 
 
+def _check_and_disable_quant(module):
+    from pycls.quantization.shift_fake_quantizer import ShiftFakeQuantize
+
+    for n, m in module.named_children():
+        if (
+            not cfg.QUANTIZATION.QAT.ENABLE_WEIGHT_QUANT
+            and isinstance(m, ShiftFakeQuantize)
+            and m.zero_point == 0
+        ):
+            m.disable_observer()
+            m.disable_fake_quant()
+            m.scale.requires_grad = False
+            m.zero_point.requires_grad = False
+        elif (
+            not cfg.QUANTIZATION.QAT.ENABLE_ACT_QUANT
+            and isinstance(m, ShiftFakeQuantize)
+            and m.zero_point != 0
+        ):
+            m.disable_observer()
+            m.disable_fake_quant()
+            m.scale.requires_grad = False
+            m.zero_point.requires_grad = False
+
+        if not isinstance(m, ShiftFakeQuantize):
+            _check_and_disable_quant(m)
+
+
 def _fuse_qat_model(module: Module):
     swapped_module = {}
     for n, m in module.named_children():
@@ -227,6 +254,13 @@ def train_qat_network():
         calibrate_model(model, calibration_loader)
     model.apply(torch.quantization.disable_observer)
     ema.apply(torch.quantization.disable_observer)
+
+    model = net.unwrap_model(model)
+    ema = net.unwrap_model(ema)
+    _check_and_disable_quant(model)
+    _check_and_disable_quant(ema)
+    model = model2cuda(model)
+    ema = model2cuda(ema)
 
     if cfg.QUANTIZATION.QAT.TRAIN_SHIFT_BIAS_QUANTIZATION:
         _enable_bias_quant(model)

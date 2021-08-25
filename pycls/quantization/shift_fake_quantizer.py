@@ -35,7 +35,9 @@ class ShiftFakeQuantize(FakeQuantizeBase):
             quant_max <= torch.iinfo(self.activation_post_process.dtype).max
         ), "quant_max out of bound"
         self.scale = Parameter(torch.tensor([1 / 2], dtype=torch.float))
-        self.register_buffer("zero_point", torch.tensor([0.0]))
+        self.register_buffer(
+            "zero_point", torch.tensor([(quant_max + quant_min + 1) / 2])
+        )
         self.register_buffer(
             "bitwidth",
             torch.tensor([np.log2(quant_max - quant_min + 1)], dtype=torch.int),

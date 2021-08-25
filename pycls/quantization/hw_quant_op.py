@@ -165,10 +165,15 @@ class HWQAvgPool2d(nn.Module):
         self.prev_post_process = prev_post_process
 
     def forward(self, x: Tensor):
-        s = _get_shift_scale_value(self.prev_post_process.scale)
-        y = torch.sum(x.div(s), (2, 3), keepdim=True)
-        size = np.exp2(np.ceil(np.log2(x.shape[-1] * x.shape[-2])))
-        return RoundQuant.apply(y.div_(size)).mul(s)
+        if cfg.QUANTIZATION.QAT.ENABLE_ACT_QUANT:
+            s = _get_shift_scale_value(self.prev_post_process.scale)
+            y = torch.sum(x.div(s), (2, 3), keepdim=True)
+            size = np.exp2(np.ceil(np.log2(x.shape[-1] * x.shape[-2])))
+            return RoundQuant.apply(y.div_(size)).mul(s)
+        else:
+            y = torch.sum(x, (2, 3), keepdim=True)
+            size = np.exp2(np.ceil(np.log2(x.shape[-1] * x.shape[-2])))
+            return y.div_(size)
 
     @classmethod
     def from_trained_op(cls, prev_post_process):
