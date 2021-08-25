@@ -422,16 +422,36 @@ class InvertedResidual(nn.Module):
         return result
 
 
-class MobileNetV3(nn.Module):
-
+class MobileNetV3(Module):
     def __init__(
-            self,
-            inverted_residual_setting: List[InvertedResidualConfig],
-            last_channel: int,
-            num_classes: int = 1000,
-            block: Optional[Callable[..., nn.Module]] = None,
-            norm_layer: Optional[Callable[..., nn.Module]] = None,
-            **kwargs: Any
+        self,
+        reduece_divider=1,
+        dilation=1,
+        inverted_residual_setting: List[InvertedResidualConfig] = [
+            bneck_conf(16, 3, 16, 16, False, "RE", 1, 1),
+            bneck_conf(16, 3, 64, 24, False, "RE", 2, 1),  # C1
+            bneck_conf(24, 3, 72, 24, False, "RE", 1, 1),
+            bneck_conf(24, 5, 72, 40, True, "RE", 2, 1),  # C2
+            bneck_conf(40, 5, 120, 40, True, "RE", 1, 1),
+            bneck_conf(40, 5, 120, 40, True, "RE", 1, 1),
+            bneck_conf(40, 3, 240, 80, False, "HS", 2, 1),  # C3
+            bneck_conf(80, 3, 200, 80, False, "HS", 1, 1),
+            bneck_conf(80, 3, 184, 80, False, "HS", 1, 1),
+            bneck_conf(80, 3, 184, 80, False, "HS", 1, 1),
+            bneck_conf(80, 3, 480, 112, True, "HS", 1, 1),
+            bneck_conf(112, 3, 672, 112, True, "HS", 1, 1),
+            bneck_conf(112, 5, 672, 160 // reduce_divider,
+                       True, "HS", 2, dilation),  # C4
+            bneck_conf(160 // reduce_divider, 5, 960 // reduce_divider,
+                       160 // reduce_divider, True, "HS", 1, dilation),
+            bneck_conf(160 // reduce_divider, 5, 960 // reduce_divider,
+                       160 // reduce_divider, True, "HS", 1, dilation),
+        ],
+        last_channel: int = adjust_channels(1280 // reduce_divider),  # C5,
+        num_classes: int = 1000,
+        block: Optional[Callable[..., nn.Module]] = None,
+        norm_layer: Optional[Callable[..., nn.Module]] = None,
+        **kwargs: Any
     ) -> None:
         """
         MobileNet V3 main class
@@ -509,102 +529,3 @@ class MobileNetV3(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         return self._forward_impl(x)
-
-
-def _mobilenet_v3_conf(arch: str, width_mult: float = 1.0, reduced_tail: bool = False, dilated: bool = False,
-                       **kwargs: Any):
-    reduce_divider = 2 if reduced_tail else 1
-    dilation = 2 if dilated else 1
-
-    bneck_conf = partial(InvertedResidualConfig, width_mult=width_mult)
-    adjust_channels = partial(
-        InvertedResidualConfig.adjust_channels, width_mult=width_mult)
-
-    if arch == "mobilenet_v3_large":
-        inverted_residual_setting = [
-            bneck_conf(16, 3, 16, 16, False, "RE", 1, 1),
-            bneck_conf(16, 3, 64, 24, False, "RE", 2, 1),  # C1
-            bneck_conf(24, 3, 72, 24, False, "RE", 1, 1),
-            bneck_conf(24, 5, 72, 40, True, "RE", 2, 1),  # C2
-            bneck_conf(40, 5, 120, 40, True, "RE", 1, 1),
-            bneck_conf(40, 5, 120, 40, True, "RE", 1, 1),
-            bneck_conf(40, 3, 240, 80, False, "HS", 2, 1),  # C3
-            bneck_conf(80, 3, 200, 80, False, "HS", 1, 1),
-            bneck_conf(80, 3, 184, 80, False, "HS", 1, 1),
-            bneck_conf(80, 3, 184, 80, False, "HS", 1, 1),
-            bneck_conf(80, 3, 480, 112, True, "HS", 1, 1),
-            bneck_conf(112, 3, 672, 112, True, "HS", 1, 1),
-            bneck_conf(112, 5, 672, 160 // reduce_divider,
-                       True, "HS", 2, dilation),  # C4
-            bneck_conf(160 // reduce_divider, 5, 960 // reduce_divider,
-                       160 // reduce_divider, True, "HS", 1, dilation),
-            bneck_conf(160 // reduce_divider, 5, 960 // reduce_divider,
-                       160 // reduce_divider, True, "HS", 1, dilation),
-        ]
-        last_channel = adjust_channels(1280 // reduce_divider)  # C5
-    elif arch == "mobilenet_v3_small":
-        inverted_residual_setting = [
-            bneck_conf(16, 3, 16, 16, True, "RE", 2, 1),  # C1
-            bneck_conf(16, 3, 72, 24, False, "RE", 2, 1),  # C2
-            bneck_conf(24, 3, 88, 24, False, "RE", 1, 1),
-            bneck_conf(24, 5, 96, 40, True, "HS", 2, 1),  # C3
-            bneck_conf(40, 5, 240, 40, True, "HS", 1, 1),
-            bneck_conf(40, 5, 240, 40, True, "HS", 1, 1),
-            bneck_conf(40, 5, 120, 48, True, "HS", 1, 1),
-            bneck_conf(48, 5, 144, 48, True, "HS", 1, 1),
-            bneck_conf(48, 5, 288, 96 // reduce_divider,
-                       True, "HS", 2, dilation),  # C4
-            bneck_conf(96 // reduce_divider, 5, 576 // reduce_divider,
-                       96 // reduce_divider, True, "HS", 1, dilation),
-            bneck_conf(96 // reduce_divider, 5, 576 // reduce_divider,
-                       96 // reduce_divider, True, "HS", 1, dilation),
-        ]
-        last_channel = adjust_channels(1024 // reduce_divider)  # C5
-    else:
-        raise ValueError("Unsupported model type {}".format(arch))
-
-    return inverted_residual_setting, last_channel
-
-
-def _mobilenet_v3_model(
-    arch: str,
-    inverted_residual_setting: List[InvertedResidualConfig],
-    last_channel: int,
-    pretrained: bool,
-    progress: bool,
-    **kwargs: Any
-):
-    model = MobileNetV3(inverted_residual_setting, last_channel, **kwargs)
-    if pretrained:
-        if model_urls.get(arch, None) is None:
-            raise ValueError(
-                "No checkpoint is available for model type {}".format(arch))
-        state_dict = load_state_dict_from_url(
-            model_urls[arch], progress=progress)
-        model.load_state_dict(state_dict)
-    return model
-
-
-class MobileNetV3(nn.Module):
-    def __init__(self, num_classes=1000):
-        super(MobileNetV3_Large, self).__init__()
-
-    def init_params(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                init.kaiming_normal_(m.weight, mode='fan_out')
-                if m.bias is not None:
-                    init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                init.constant_(m.weight, 1)
-                init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                init.normal_(m.weight, std=0.001)
-                if m.bias is not None:
-                    init.constant_(m.bias, 0)
-
-    def forward(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> MobileNetV3:
-        arch = "mobilenet_v3_large"
-        inverted_residual_setting, last_channel = _mobilenet_v3_conf(
-            arch, **kwargs)
-        return _mobilenet_v3_model(arch, inverted_residual_setting, last_channel, pretrained, progress, **kwargs)
