@@ -324,137 +324,359 @@
 
 """MobileNetV3 models."""
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn import init
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import copy
+import functools
+import numpy as np
+
+import tensorflow.compat.v1 as tf
+import tf_slim as slim
+
+# from nets.mobilenet import conv_blocks as ops
+# from nets.mobilenet import mobilenet as lib
+
+_Op = collections.namedtuple('Op', ['op', 'params', 'multiplier_func'])
 
 
-class hswish(nn.Module):
-    def forward(self, x):
-        out = x * F.relu6(x + 3, inplace=True) / 6
-        return out
+def op(opfunc, multiplier_func=depth_multiplier, **params):
+    multiplier = params.pop('multiplier_transform', multiplier_func)
+    return _Op(opfunc, params=params, multiplier_func=multiplier)
 
 
-class hsigmoid(nn.Module):
-    def forward(self, x):
-        out = F.relu6(x + 3, inplace=True) / 6
-        return out
+expand_input = ops.expand_input_by_factor
 
 
-class SeModule(nn.Module):
-    def __init__(self, in_size, reduction=4):
-        super(SeModule, self).__init__()
-        self.se = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(in_size, in_size // reduction, kernel_size=1,
-                      stride=1, padding=0, bias=False),
-            nn.BatchNorm2d(in_size // reduction),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(in_size // reduction, in_size, kernel_size=1,
-                      stride=1, padding=0, bias=False),
-            nn.BatchNorm2d(in_size),
-            hsigmoid()
-        )
+def expanded_conv(input_tensor,
+                  num_outputs,
+                  expansion_size=expand_input_by_factor(6),
+                  stride=1,
+                  rate=1,
+                  kernel_size=(3, 3),
+                  residual=True,
+                  normalizer_fn=None,
+                  split_projection=1,
+                  split_expansion=1,
+                  split_divisible_by=8,
+                  expansion_transform=None,
+                  depthwise_location='expansion',
+                  depthwise_channel_multiplier=1,
+                  endpoints=None,
+                  use_explicit_padding=False,
+                  padding='SAME',
+                  inner_activation_fn=None,
+                  depthwise_activation_fn=None,
+                  project_activation_fn=tf.identity,
+                  depthwise_fn=slim.separable_conv2d,
+                  expansion_fn=split_conv,
+                  projection_fn=split_conv,
+                  scope=None):
+    """Depthwise Convolution Block with expansion.
+    Builds a composite convolution that has the following structure
+    expansion (1x1) -> depthwise (kernel_size) -> projection (1x1)
+    Args:
+      input_tensor: input
+      num_outputs: number of outputs in the final layer.
+      expansion_size: the size of expansion, could be a constant or a callable.
+        If latter it will be provided 'num_inputs' as an input. For forward
+        compatibility it should accept arbitrary keyword arguments.
+        Default will expand the input by factor of 6.
+      stride: depthwise stride
+      rate: depthwise rate
+      kernel_size: depthwise kernel
+      residual: whether to include residual connection between input
+        and output.
+      normalizer_fn: batchnorm or otherwise
+      split_projection: how many ways to split projection operator
+        (that is conv expansion->bottleneck)
+      split_expansion: how many ways to split expansion op
+        (that is conv bottleneck->expansion) ops will keep depth divisible
+        by this value.
+      split_divisible_by: make sure every split group is divisible by this number.
+      expansion_transform: Optional function that takes expansion
+        as a single input and returns output.
+      depthwise_location: where to put depthwise covnvolutions supported
+        values None, 'input', 'output', 'expansion'
+      depthwise_channel_multiplier: depthwise channel multiplier:
+      each input will replicated (with different filters)
+      that many times. So if input had c channels,
+      output will have c x depthwise_channel_multpilier.
+      endpoints: An optional dictionary into which intermediate endpoints are
+        placed. The keys "expansion_output", "depthwise_output",
+        "projection_output" and "expansion_transform" are always populated, even
+        if the corresponding functions are not invoked.
+      use_explicit_padding: Use 'VALID' padding for convolutions, but prepad
+        inputs so that the output dimensions are the same as if 'SAME' padding
+        were used.
+      padding: Padding type to use if `use_explicit_padding` is not set.
+      inner_activation_fn: activation function to use in all inner convolutions.
+      If none, will rely on slim default scopes.
+      depthwise_activation_fn: activation function to use for deptwhise only.
+        If not provided will rely on slim default scopes. If both
+        inner_activation_fn and depthwise_activation_fn are provided,
+        depthwise_activation_fn takes precedence over inner_activation_fn.
+      project_activation_fn: activation function for the project layer.
+      (note this layer is not affected by inner_activation_fn)
+      depthwise_fn: Depthwise convolution function.
+      expansion_fn: Expansion convolution function. If use custom function then
+        "split_expansion" and "split_divisible_by" will be ignored.
+      projection_fn: Projection convolution function. If use custom function then
+        "split_projection" and "split_divisible_by" will be ignored.
+      scope: optional scope.
+    Returns:
+      Tensor of depth num_outputs
+    Raises:
+      TypeError: on inval
+    """
+    conv_defaults = {}
+    dw_defaults = {}
+    if inner_activation_fn is not None:
+        conv_defaults['activation_fn'] = inner_activation_fn
+        dw_defaults['activation_fn'] = inner_activation_fn
+    if depthwise_activation_fn is not None:
+        dw_defaults['activation_fn'] = depthwise_activation_fn
+    # pylint: disable=g-backslash-continuation
+    with tf.variable_scope(scope, default_name='expanded_conv') as s, \
+            tf.name_scope(s.original_name_scope), \
+            slim.arg_scope((slim.conv2d,), **conv_defaults), \
+            slim.arg_scope((slim.separable_conv2d,), **dw_defaults):
+        prev_depth = input_tensor.get_shape().as_list()[3]
+        if depthwise_location not in [None, 'input', 'output', 'expansion']:
+            raise TypeError('%r is unknown value for depthwise_location' %
+                            depthwise_location)
+        if use_explicit_padding:
+            if padding != 'SAME':
+                raise TypeError('`use_explicit_padding` should only be used with '
+                                '"SAME" padding.')
+            padding = 'VALID'
+        depthwise_func = functools.partial(
+            depthwise_fn,
+            num_outputs=None,
+            kernel_size=kernel_size,
+            depth_multiplier=depthwise_channel_multiplier,
+            stride=stride,
+            rate=rate,
+            normalizer_fn=normalizer_fn,
+            padding=padding,
+            scope='depthwise')
+        # b1 -> b2 * r -> b2
+        #   i -> (o * r) (bottleneck) -> o
+        input_tensor = tf.identity(input_tensor, 'input')
+        net = input_tensor
 
-    def forward(self, x):
-        return x * self.se(x)
+        if depthwise_location == 'input':
+            if use_explicit_padding:
+                net = _fixed_padding(net, kernel_size, rate)
+            net = depthwise_func(net, activation_fn=None)
+            net = tf.identity(net, name='depthwise_output')
+            if endpoints is not None:
+                endpoints['depthwise_output'] = net
+
+        if callable(expansion_size):
+            inner_size = expansion_size(num_inputs=prev_depth)
+        else:
+            inner_size = expansion_size
+
+        if inner_size > net.shape[3]:
+            if expansion_fn == split_conv:
+                expansion_fn = functools.partial(
+                    expansion_fn,
+                    num_ways=split_expansion,
+                    divisible_by=split_divisible_by,
+                    stride=1)
+            net = expansion_fn(
+                net,
+                inner_size,
+                scope='expand',
+                normalizer_fn=normalizer_fn)
+            net = tf.identity(net, 'expansion_output')
+            if endpoints is not None:
+                endpoints['expansion_output'] = net
+
+        if depthwise_location == 'expansion':
+            if use_explicit_padding:
+                net = _fixed_padding(net, kernel_size, rate)
+            net = depthwise_func(net)
+            net = tf.identity(net, name='depthwise_output')
+            if endpoints is not None:
+                endpoints['depthwise_output'] = net
+
+        if expansion_transform:
+            net = expansion_transform(
+                expansion_tensor=net, input_tensor=input_tensor)
+        # Note in contrast with expansion, we always have
+        # projection to produce the desired output size.
+        if projection_fn == split_conv:
+            projection_fn = functools.partial(
+                projection_fn,
+                num_ways=split_projection,
+                divisible_by=split_divisible_by,
+                stride=1)
+        net = projection_fn(
+            net,
+            num_outputs,
+            scope='project',
+            normalizer_fn=normalizer_fn,
+            activation_fn=project_activation_fn)
+        if endpoints is not None:
+            endpoints['projection_output'] = net
+        if depthwise_location == 'output':
+            if use_explicit_padding:
+                net = _fixed_padding(net, kernel_size, rate)
+            net = depthwise_func(net, activation_fn=None)
+            net = tf.identity(net, name='depthwise_output')
+            if endpoints is not None:
+                endpoints['depthwise_output'] = net
+
+        if callable(residual):  # custom residual
+            net = residual(input_tensor=input_tensor, output_tensor=net)
+        elif (residual and
+              # stride check enforces that we don't add residuals when spatial
+              # dimensions are None
+              stride == 1 and
+              # Depth matches
+              net.get_shape().as_list()[3] ==
+              input_tensor.get_shape().as_list()[3]):
+            net += input_tensor
+        return tf.identity(net, name='output')
 
 
-class Block(nn.Module):
-    '''expand + depthwise + pointwise'''
+# Squeeze Excite with all parameters filled-in, we use hard-sigmoid
+# for gating function and relu for inner activation function.
+squeeze_excite = functools.partial(
+    ops.squeeze_excite, squeeze_factor=4,
+    inner_activation_fn=tf.nn.relu,
+    gating_fn=lambda x: tf.nn.relu6(x+3)*0.16667)
 
-    def __init__(self, kernel_size, in_size, expand_size, out_size, nolinear, semodule, stride):
-        super(Block, self).__init__()
-        self.stride = stride
-        self.se = semodule
+# Wrap squeeze excite op as expansion_transform that takes
+# both expansion and input tensor.
 
-        self.conv1 = nn.Conv2d(in_size, expand_size,
-                               kernel_size=1, stride=1, padding=0, bias=False)
-        self.bn1 = nn.BatchNorm2d(expand_size)
-        self.nolinear1 = nolinear
-        self.conv2 = nn.Conv2d(expand_size, expand_size, kernel_size=kernel_size,
-                               stride=stride, padding=kernel_size//2, groups=expand_size, bias=False)
-        self.bn2 = nn.BatchNorm2d(expand_size)
-        self.nolinear2 = nolinear
-        self.conv3 = nn.Conv2d(expand_size, out_size,
-                               kernel_size=1, stride=1, padding=0, bias=False)
-        self.bn3 = nn.BatchNorm2d(out_size)
 
-        self.shortcut = nn.Sequential()
-        if stride == 1 and in_size != out_size:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_size, out_size, kernel_size=1,
-                          stride=1, padding=0, bias=False),
-                nn.BatchNorm2d(out_size),
-            )
+def _se4(expansion_tensor, input_tensor): return squeeze_excite(
+    expansion_tensor)
 
-    def forward(self, x):
-        out = self.nolinear1(self.bn1(self.conv1(x)))
-        out = self.nolinear2(self.bn2(self.conv2(out)))
-        out = self.bn3(self.conv3(out))
-        if self.se != None:
-            out = self.se(out)
-        out = out + self.shortcut(x) if self.stride == 1 else out
-        return out
+
+def hard_swish(x):
+    with tf.name_scope('hard_swish'):
+        return x * tf.nn.relu6(x + np.float32(3)) * np.float32(1. / 6.)
+
+
+def reduce_to_1x1(input_tensor, default_size=7, **kwargs):
+    h, w = input_tensor.shape.as_list()[1:3]
+    if h is not None and w == h:
+        k = [h, h]
+    else:
+        k = [default_size, default_size]
+    return slim.avg_pool2d(input_tensor, kernel_size=k, **kwargs)
+
+
+def mbv3_op(ef, n, k, s=1, act=tf.nn.relu, se=None, **kwargs):
+    """Defines a single Mobilenet V3 convolution block.
+    Args:
+      ef: expansion factor
+      n: number of output channels
+      k: stride of depthwise
+      s: stride
+      act: activation function in inner layers
+      se: squeeze excite function.
+      **kwargs: passed to expanded_conv
+    Returns:
+      An object (lib._Op) for inserting in conv_def, representing this operation.
+    """
+    return op(
+        ops.expanded_conv,
+        expansion_size=expand_input(ef),
+        kernel_size=(k, k),
+        stride=s,
+        num_outputs=n,
+        inner_activation_fn=act,
+        expansion_transform=se,
+        **kwargs)
+
+
+def mbv3_fused(ef, n, k, s=1, **kwargs):
+    """Defines a single Mobilenet V3 convolution block.
+    Args:
+      ef: expansion factor
+      n: number of output channels
+      k: stride of depthwise
+      s: stride
+      **kwargs: will be passed to mbv3_op
+    Returns:
+      An object (lib._Op) for inserting in conv_def, representing this operation.
+    """
+    expansion_fn = functools.partial(slim.conv2d, kernel_size=k, stride=s)
+    return mbv3_op(
+        ef,
+        n,
+        k=1,
+        s=s,
+        depthwise_location=None,
+        expansion_fn=expansion_fn,
+        **kwargs)
+
+
+mbv3_op_se = functools.partial(mbv3_op, se=_se4)
+
+
+DEFAULTS = {
+    (ops.expanded_conv,):
+        dict(
+            normalizer_fn=slim.batch_norm,
+            residual=True),
+    (slim.conv2d, slim.fully_connected, slim.separable_conv2d): {
+        'normalizer_fn': slim.batch_norm,
+        'activation_fn': tf.nn.relu,
+    },
+    (slim.batch_norm,): {
+        'center': True,
+        'scale': True
+    },
+}
+
+DEFAULTS_GROUP_NORM = {
+    (ops.expanded_conv,): dict(normalizer_fn=slim.group_norm, residual=True),
+    (slim.conv2d, slim.fully_connected, slim.separable_conv2d): {
+        'normalizer_fn': slim.group_norm,
+        'activation_fn': tf.nn.relu,
+    },
+    (slim.group_norm,): {
+        'groups': 8
+    },
+}
 
 
 class MobileNetV3(nn.Module):
     def __init__(self, num_classes=1000):
         super(MobileNetV3, self).__init__()
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=3,
-                               stride=2, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.hs1 = hswish()
 
         self.bneck = nn.Sequential(
-            Block(3, 16, 16, 16, nn.ReLU(inplace=True), None, 1),
-            Block(3, 16, 64, 24, nn.ReLU(inplace=True), None, 2),
-            Block(3, 24, 72, 24, nn.ReLU(inplace=True), None, 1),
-            Block(5, 24, 72, 40, nn.ReLU(inplace=True), SeModule(40), 2),
-            Block(5, 40, 120, 40, nn.ReLU(inplace=True), SeModule(40), 1),
-            Block(5, 40, 120, 40, nn.ReLU(inplace=True), SeModule(40), 1),
-            Block(3, 40, 240, 80, hswish(), None, 2),
-            Block(3, 80, 200, 80, hswish(), None, 1),
-            Block(3, 80, 184, 80, hswish(), None, 1),
-            Block(3, 80, 184, 80, hswish(), None, 1),
-            Block(3, 80, 480, 112, hswish(), SeModule(112), 1),
-            Block(3, 112, 672, 112, hswish(), SeModule(112), 1),
-            Block(5, 112, 672, 160, hswish(), SeModule(160), 1),
-            Block(5, 160, 672, 160, hswish(), SeModule(160), 2),
-            Block(5, 160, 960, 160, hswish(), SeModule(160), 1),
+            op(slim.conv2d, stride=2, num_outputs=16, kernel_size=(3, 3),
+               activation_fn=hard_swish),
+            mbv3_op(ef=1, n=16, k=3),
+            mbv3_op(ef=4, n=24, k=3, s=2),
+            mbv3_op(ef=3, n=24, k=3, s=1),
+            mbv3_op_se(ef=3, n=40, k=5, s=2),
+            mbv3_op_se(ef=3, n=40, k=5, s=1),
+            mbv3_op_se(ef=3, n=40, k=5, s=1),
+            mbv3_op(ef=6, n=80, k=3, s=2, act=hard_swish),
+            mbv3_op(ef=2.5, n=80, k=3, s=1, act=hard_swish),
+            mbv3_op(ef=184/80., n=80, k=3, s=1, act=hard_swish),
+            mbv3_op(ef=184/80., n=80, k=3, s=1, act=hard_swish),
+            mbv3_op_se(ef=6, n=112, k=3, s=1, act=hard_swish),
+            mbv3_op_se(ef=6, n=112, k=3, s=1, act=hard_swish),
+            mbv3_op_se(ef=6, n=160, k=5, s=2, act=hard_swish),
+            mbv3_op_se(ef=6, n=160, k=5, s=1, act=hard_swish),
+            mbv3_op_se(ef=6, n=160, k=5, s=1, act=hard_swish),
+            op(slim.conv2d, stride=1, kernel_size=[1, 1], num_outputs=960,
+               activation_fn=hard_swish),
+            op(reduce_to_1x1, default_size=7, stride=1, padding='VALID'),
+            op(slim.conv2d, stride=1, kernel_size=[1, 1], num_outputs=1280,
+               normalizer_fn=None, activation_fn=hard_swish)
         )
 
-        self.conv2 = nn.Conv2d(160, 960, kernel_size=1,
-                               stride=1, padding=0, bias=False)
-        self.bn2 = nn.BatchNorm2d(960)
-        self.hs2 = hswish()
-        self.linear3 = nn.Linear(960, 1280)
-        self.bn3 = nn.BatchNorm1d(1280)
-        self.hs3 = hswish()
-        self.linear4 = nn.Linear(1280, num_classes)
-        self.init_params()
-
-    def init_params(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                init.kaiming_normal_(m.weight, mode='fan_out')
-                if m.bias is not None:
-                    init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                init.constant_(m.weight, 1)
-                init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                init.normal_(m.weight, std=0.001)
-                if m.bias is not None:
-                    init.constant_(m.bias, 0)
-
     def forward(self, x):
-        out = self.hs1(self.bn1(self.conv1(x)))
-        out = self.bneck(out)
-        out = self.hs2(self.bn2(self.conv2(out)))
-        out = F.avg_pool2d(out, 7)
-        out = out.view(out.size(0), -1)
-        out = self.hs3(self.bn3(self.linear3(out)))
-        out = self.linear4(out)
+        out = self.bneck(x)
         return out
