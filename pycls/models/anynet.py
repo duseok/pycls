@@ -86,7 +86,8 @@ class AnyHead(Module):
 
     def fuse_model(self, include_relu: bool):
         if self.head_width > 0:
-            targets = [["conv", "bn", "af"]] if include_relu else [["conv", "bn"]]
+            targets = [["conv", "bn", "af"]
+                       ] if include_relu else [["conv", "bn"]]
             fuse_modules(self, targets, inplace=True)
 
 
@@ -466,3 +467,10 @@ class AnyNet(Module):
             if type(m) == AnyStage:
                 m.fuse_model(include_relu)
         self.head.fuse_model(include_relu)
+
+    def postprocess_skip(self):
+        for mod in self.modules():
+            if isinstance(mod, AnyStage) and len(mod._modules) > 1:
+                fakeq = mod._modules["b1"].f.c.activation_post_process
+                for _, m in list(mod._modules.items())[1:]:
+                    m.f.c.activation_post_process = fakeq
