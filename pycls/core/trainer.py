@@ -95,8 +95,13 @@ def train_epoch(
         # Perform the forward pass and compute the loss
         with amp.autocast(enabled=cfg.TRAIN.MIXED_PRECISION):
             preds = model(inputs)
+            preds_scaled = (
+                preds
+                if cfg.TRAIN.TEMPERATURE == 1.0
+                else torch.div(preds, cfg.TRAIN.TEMPERATURE)
+            )
             loss = (
-                loss_fun(preds, labels_one_hot)
+                loss_fun(preds_scaled, labels_one_hot)
                 + teacher_student_loss(teacher, inputs, preds)
                 + (quant_loss(model) * cfg.QUANTIZATION.QAT.QUANTIZATION_LOSS_ALPHA)
             )

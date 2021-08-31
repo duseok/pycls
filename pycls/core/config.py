@@ -374,6 +374,9 @@ _C.TRAIN.MIXED_PRECISION = False
 # Label smoothing value in 0 to 1 where (0 gives no smoothing)
 _C.TRAIN.LABEL_SMOOTHING = 0.0
 
+# Temperature scaling value
+_C.TRAIN.TEMPERATURE = 1.0
+
 # Batch mixup regularization value in 0 to 1 (0 gives no mixup)
 _C.TRAIN.MIXUP_ALPHA = 0.0
 
