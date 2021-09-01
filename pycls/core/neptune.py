@@ -35,7 +35,7 @@ class NeptuneLogger(metaclass=SingletonMeta):
     def __init__(self):
         self.__load_cfg()
         self.nt = neptune.init(
-            project=_C.PROJECT,
+            project=_C.PROJECT if cfg.NEPTUNE_PROJECT == "" else cfg.NEPTUNE_PROJECT,
             api_token=_C.TOKEN,
             tags=_C.TAGS,
             run=None if cfg.NEPTUNE_RESUME == "" else cfg.NEPTUNE_RESUME,
@@ -50,3 +50,6 @@ class NeptuneLogger(metaclass=SingletonMeta):
 
     def log(self, name: str, value: int or float):
         self.nt[name].log(value)
+
+    def sync(self):
+        self.nt.sync(wait=False)

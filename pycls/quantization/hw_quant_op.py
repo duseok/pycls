@@ -159,18 +159,25 @@ class RoundQuant(torch.autograd.Function):
 
 
 class HWQAvgPool2d(nn.Module):
-    def __init__(self, *args, **kargs):
+    def __init__(self, prev_post_process, *args, **kargs):
         super(HWQAvgPool2d, self).__init__(*args, **kargs)
         self.divisor_override = 1
+        self.prev_post_process = prev_post_process
 
-    def forward(self, x):
-        y = torch.sum(x, (2, 3), keepdim=True)
-        size = np.exp2(np.ceil(np.log2(x.shape[-1] * x.shape[-2])))
-        return RoundQuant.apply(y.div(size))
+    def forward(self, x: Tensor):
+        if cfg.QUANTIZATION.QAT.ENABLE_ACT_QUANT:
+            s = _get_shift_scale_value(self.prev_post_process.scale)
+            y = torch.sum(x.div(s), (2, 3), keepdim=True)
+            size = np.exp2(np.ceil(np.log2(x.shape[-1] * x.shape[-2])))
+            return RoundQuant.apply(y.div_(size)).mul(s)
+        else:
+            y = torch.sum(x, (2, 3), keepdim=True)
+            size = np.exp2(np.ceil(np.log2(x.shape[-1] * x.shape[-2])))
+            return y.div_(size)
 
     @classmethod
-    def from_trained_op(cls, op=None):
-        return cls()
+    def from_trained_op(cls, prev_post_process):
+        return cls(prev_post_process)
 
 
 class HWQMaxPool2d(nn.MaxPool2d):
@@ -183,7 +190,10 @@ class HWQMaxPool2d(nn.MaxPool2d):
 
 
 def _get_shift_scale_value(s):
-    return torch.exp2(torch.log2(F.softplus(s)).round_()).cuda()
+    from pycls.quantization.scale_activation import get_scale_act
+
+    scale_act = get_scale_act()
+    return torch.exp2(torch.log2(scale_act.apply(s)).ceil_()).cuda()
 
 
 def _quant_tensor(t: Tensor, s):

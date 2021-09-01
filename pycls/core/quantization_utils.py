@@ -156,7 +156,10 @@ def quantize_network_for_qat(model: Module):
     ), "When testing QAT, only one quantization method is supported."
     model = _quantize_model4qat(model, cfg.QUANTIZATION.METHOD[0])
     if cfg.QUANTIZATION.QAT.TRAIN_SHIFT_AVG_POOL:
-        model.model_fp32.head.avg_pool = QuantOps[AdaptiveAvgPool2d].from_trained_op()
+        prev_post_process = model.model_fp32.head.conv.activation_post_process
+        model.model_fp32.head.avg_pool = QuantOps[AdaptiveAvgPool2d].from_trained_op(
+            prev_post_process
+        )
 
     model = model2cuda(model)
     ema = deepcopy(model)

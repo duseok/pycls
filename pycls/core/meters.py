@@ -91,7 +91,8 @@ class TrainMeter(object):
         self.iter_timer = Timer()
         self.loss = ScalarMeter(cfg.LOG_PERIOD)
         self.loss_total = 0.0
-        self.lr = None
+        self.weight_lr = None
+        self.scale_lr = None
         # Current minibatch errors (smoothed over a window)
         self.mb_top1_err = ScalarMeter(cfg.LOG_PERIOD)
         self.mb_top5_err = ScalarMeter(cfg.LOG_PERIOD)
@@ -105,7 +106,8 @@ class TrainMeter(object):
             self.iter_timer.reset()
         self.loss.reset()
         self.loss_total = 0.0
-        self.lr = None
+        self.weight_lr = None
+        self.scale_lr = None
         self.mb_top1_err.reset()
         self.mb_top5_err.reset()
         self.num_top1_mis = 0
@@ -118,12 +120,13 @@ class TrainMeter(object):
     def iter_toc(self):
         self.iter_timer.toc()
 
-    def update_stats(self, top1_err, top5_err, loss, lr, mb_size):
+    def update_stats(self, top1_err, top5_err, loss, weight_lr, mb_size, scale_lr=None):
         # Current minibatch stats
         self.mb_top1_err.add_value(top1_err)
         self.mb_top5_err.add_value(top5_err)
         self.loss.add_value(loss)
-        self.lr = lr
+        self.weight_lr = weight_lr
+        self.scale_lr = scale_lr
         # Aggregate stats
         self.num_top1_mis += top1_err * mb_size
         self.num_top5_mis += top5_err * mb_size
@@ -143,7 +146,8 @@ class TrainMeter(object):
             "top1_err": self.mb_top1_err.get_win_median(),
             "top5_err": self.mb_top5_err.get_win_median(),
             "loss": self.loss.get_win_median(),
-            "lr": self.lr,
+            "weight_lr": self.weight_lr,
+            "scale_lr": self.scale_lr,
             "mem": int(np.ceil(mem_usage)),
         }
         return stats
@@ -154,7 +158,8 @@ class TrainMeter(object):
             if dist.is_master_proc() and cfg.USE_NEPTUNE:
                 nt_logger = NeptuneLogger()
                 nt_logger.log(f"TRAIN/Loss", stats["loss"])
-                nt_logger.log(f"TRAIN/LR", stats["lr"])
+                nt_logger.log(f"TRAIN/Weight_LR", stats["weight_lr"])
+                nt_logger.log(f"TRAIN/Scale_LR", stats["scale_lr"])
                 nt_logger.log(f"TRAIN/Top1.Err", stats["top1_err"])
             logger.info(logging.dump_log_data(stats, self.phase + "_iter"))
 
@@ -173,7 +178,8 @@ class TrainMeter(object):
             "top1_err": top1_err,
             "top5_err": top5_err,
             "loss": avg_loss,
-            "lr": self.lr,
+            "weight_lr": self.weight_lr,
+            "scale_lr": self.scale_lr,
             "mem": int(np.ceil(mem_usage)),
         }
         return stats
@@ -266,4 +272,5 @@ class TestMeter(object):
         if dist.is_master_proc() and cfg.USE_NEPTUNE:
             nt_logger = NeptuneLogger()
             nt_logger.log(f"TEST/{self.phase}/Top1.Err", stats["top1_err"])
+            nt_logger.sync()
         logger.info(logging.dump_log_data(stats, self.phase + "_epoch"))

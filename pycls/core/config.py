@@ -67,6 +67,15 @@ _C.QUANTIZATION.METHOD = (
 # ---------------------------------- QAT options ----------------------------------- #
 _C.QUANTIZATION.QAT = CfgNode()
 
+# Base learning rate for training scale
+_C.QUANTIZATION.QAT.SCALE_LR = 0.0
+
+# Activation function for scale from {'softplus', 'sigmoid'}
+_C.QUANTIZATION.QAT.SCALE_ACT = "softplus"
+
+# Always train scale value (if this value is false, only bn stabilzation step trains scale value)
+_C.QUANTIZATION.QAT.ALWAYS_TRAIN_SCALE = False
+
 # Weights to start training from
 _C.QUANTIZATION.QAT.FP32_WEIGHTS = ""
 
@@ -94,8 +103,14 @@ _C.QUANTIZATION.QAT.TRAIN_SHIFT_BIAS_QUANTIZATION = True
 # Act bitwidth
 _C.QUANTIZATION.QAT.ACT_BITWIDTH = 8
 
+# Enable activation quantzation
+_C.QUANTIZATION.QAT.ENABLE_ACT_QUANT = True
+
 # Weight bitwidth
 _C.QUANTIZATION.QAT.WEIGHT_BITWIDTH = 8
+
+# Enable weight quantzation
+_C.QUANTIZATION.QAT.ENABLE_WEIGHT_QUANT = True
 
 # QAT with BN
 _C.QUANTIZATION.QAT.WITH_BN = True
@@ -105,6 +120,10 @@ _C.QUANTIZATION.QAT.FOLDING_BN = False
 
 # Use MSE loss between float tensor and quantized tensor
 _C.QUANTIZATION.QAT.ENABLE_QUANTIZATION_LOSS = False
+
+# Weight for quantization loss
+_C.QUANTIZATION.QAT.QUANTIZATION_LOSS_ALPHA = 1.0
+
 
 # ---------------------------------- ResNet options ---------------------------------- #
 _C.RESNET = CfgNode()
@@ -290,6 +309,9 @@ _C.OPTIM = CfgNode()
 _C.OPTIM.BASE_LR = 0.1
 _C.OPTIM.MIN_LR = 0.0
 
+# Optimizer class
+_C.OPTIM.CLASS = "SGD"
+
 # Learning rate policy select from {'cos', 'exp', 'lin', 'steps'}
 _C.OPTIM.LR_POLICY = "cos"
 
@@ -351,6 +373,9 @@ _C.TRAIN.MIXED_PRECISION = False
 
 # Label smoothing value in 0 to 1 where (0 gives no smoothing)
 _C.TRAIN.LABEL_SMOOTHING = 0.0
+
+# Temperature scaling value
+_C.TRAIN.TEMPERATURE = 1.0
 
 # Batch mixup regularization value in 0 to 1 (0 gives no mixup)
 _C.TRAIN.MIXUP_ALPHA = 0.0
@@ -441,6 +466,7 @@ _C.LOG_PERIOD = 10
 _C.USE_NEPTUNE = False
 _C.NEPTUNE_CONFIG = "neptune.yaml"
 _C.NEPTUNE_TAGS = ()
+_C.NEPTUNE_PROJECT = ""
 _C.NEPTUNE_RESUME = ""
 
 # Distributed backend
