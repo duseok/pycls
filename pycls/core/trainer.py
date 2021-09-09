@@ -34,15 +34,52 @@ def get_kd_loss(output, output_t):
     )
 
 
+def default_lr_sched_func(optimizer, cur_epoch):
+    lr = optim.get_epoch_lr(cur_epoch)
+    optim.set_lr(optimizer, lr)
+    return lr, None
+
+
+def teacher_student_loss(teacher, inputs, preds):
+    if not teacher:
+        return 0.0
+
+    with torch.no_grad():
+        preds_t = teacher(inputs)
+    loss = get_kd_loss(preds, preds_t)
+    return loss
+
+
+def quant_loss(model: torch.nn.Module):
+    from pycls.quantization.shift_fake_quantizer import ShiftFakeQuantize
+
+    if not cfg.QUANTIZATION.QAT.ENABLE_QUANTIZATION_LOSS:
+        return 0.0
+
+    loss = 0.0
+    for _, m in model.named_modules():
+        if isinstance(m, ShiftFakeQuantize) and m.quant_loss is not None:
+            loss += m.quant_loss
+    return loss
+
+
 def train_epoch(
-    loader, model, ema, loss_fun, optimizer, scaler, meter, cur_epoch, teacher=None
+    loader,
+    model,
+    ema,
+    loss_fun,
+    optimizer,
+    scaler,
+    meter,
+    cur_epoch,
+    lr_sched_func=default_lr_sched_func,
+    teacher=None,
 ):
     """Performs one epoch of training."""
     # Shuffle the data
     data_loader.shuffle(loader, cur_epoch)
     # Update the learning rate
-    lr = optim.get_epoch_lr(cur_epoch)
-    optim.set_lr(optimizer, lr)
+    weight_lr, scale_lr = lr_sched_func(optimizer, cur_epoch)
     # Enable training mode
     model.train()
     ema.train()
@@ -56,13 +93,17 @@ def train_epoch(
         # Apply mixup to the batch (no effect if mixup alpha is 0)
         inputs, labels_one_hot, labels = net.mixup(inputs, labels_one_hot)
         # Perform the forward pass and compute the loss
-        if teacher:
-            with torch.no_grad():
-                preds_t = teacher(inputs)
         with amp.autocast(enabled=cfg.TRAIN.MIXED_PRECISION):
             preds = model(inputs)
-            loss = loss_fun(preds, labels_one_hot) + (
-                get_kd_loss(preds, preds_t) if teacher else 0.0
+            preds_scaled = (
+                preds
+                if cfg.TRAIN.TEMPERATURE == 1.0
+                else torch.div(preds, cfg.TRAIN.TEMPERATURE)
+            )
+            loss = (
+                loss_fun(preds_scaled, labels_one_hot)
+                + teacher_student_loss(teacher, inputs, preds)
+                + (quant_loss(model) * cfg.QUANTIZATION.QAT.QUANTIZATION_LOSS_ALPHA)
             )
         # Perform the backward pass and update the parameters
         optimizer.zero_grad()
@@ -80,7 +121,7 @@ def train_epoch(
         meter.iter_toc()
         # Update and log stats
         mb_size = inputs.size(0) * cfg.NUM_GPUS
-        meter.update_stats(top1_err, top5_err, loss, lr, mb_size)
+        meter.update_stats(top1_err, top5_err, loss, weight_lr, mb_size, scale_lr)
         meter.log_iter_stats(cur_epoch, cur_iter)
         meter.iter_tic()
     # Log epoch stats
@@ -156,7 +197,7 @@ def train_model():
     for cur_epoch in range(start_epoch, cfg.OPTIM.MAX_EPOCH):
         # Train for one epoch
         params = (train_loader, model, ema, loss_fun, optimizer, scaler, train_meter)
-        train_epoch(*params, cur_epoch, teacher)
+        train_epoch(*params, cur_epoch, default_lr_sched_func, teacher)
         # Compute precise BN stats
         if cfg.BN.USE_PRECISE_STATS:
             net.compute_precise_bn_stats(model, train_loader)

@@ -1,7 +1,7 @@
 import numpy as np
 import torch
-import torch.nn.functional as F
 from pycls.core.config import cfg
+from pycls.quantization.scale_activation import get_scale_act
 from torch.nn.parameter import Parameter
 from torch.quantization.fake_quantize import FakeQuantizeBase
 
@@ -9,24 +9,11 @@ from torch.quantization.fake_quantize import FakeQuantizeBase
 class ShiftScaleQuant(torch.autograd.Function):
     @staticmethod
     def forward(ctx, s):
-        return torch.exp2(torch.log2(s).round())
+        return torch.exp2(torch.log2(s).ceil())
 
     @staticmethod
     def backward(ctx, grad_output):
         return grad_output
-
-
-class FakeQuantFunc(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x: torch.Tensor, quant_x: torch.Tensor):
-        ctx.save_for_backward(x - quant_x)
-        return quant_x.clone().detach_()
-
-    @staticmethod
-    def backward(ctx, grad_output: torch.Tensor):
-        diff = ctx.saved_tensors[0]
-        grad = 2 * diff.div_(diff.numel())
-        return grad, grad_output
 
 
 class ShiftFakeQuantize(FakeQuantizeBase):
@@ -47,14 +34,18 @@ class ShiftFakeQuantize(FakeQuantizeBase):
         assert (
             quant_max <= torch.iinfo(self.activation_post_process.dtype).max
         ), "quant_max out of bound"
-        self.scale = Parameter(torch.tensor([np.log(np.exp(1) - 1)], dtype=torch.float))
-        self.register_buffer("zero_point", torch.tensor([0.0]))
+        self.scale = Parameter(torch.tensor([1 / 2], dtype=torch.float))
+        self.register_buffer(
+            "zero_point", torch.tensor([(quant_max + quant_min + 1) / 2])
+        )
         self.register_buffer(
             "bitwidth",
             torch.tensor([np.log2(quant_max - quant_min + 1)], dtype=torch.int),
         )
         self.dtype = self.activation_post_process.dtype
         self.qscheme = self.activation_post_process.qscheme
+        self.scale_act = get_scale_act()
+        self.quant_loss = None
 
     def forward(self, X: torch.Tensor):
         if self.observer_enabled[0] == 1:
@@ -66,15 +57,16 @@ class ShiftFakeQuantize(FakeQuantizeBase):
             )
             self.zero_point.resize_(_zero_point.shape)
             self.zero_point.copy_(_zero_point)
-            self.scale.data.fill_(torch.log(torch.exp(_scale[0]) - 1))
+            self.scale.data.fill_(self.scale_act.inverse(_scale[0]))
 
+        Y = X
         if self.fake_quant_enabled[0] == 1:
-            s = ShiftScaleQuant.apply(F.softplus(self.scale))
+            s = ShiftScaleQuant.apply(self.scale_act.apply(self.scale))
             Y = torch._fake_quantize_learnable_per_tensor_affine(
                 X, s, self.zero_point, self.quant_min, self.quant_max, 1.0
             )
             if cfg.QUANTIZATION.QAT.ENABLE_QUANTIZATION_LOSS:
-                Y = FakeQuantFunc.apply(X, Y)
+                self.quant_loss = torch.mean((X - Y) ** 2)
         return Y
 
     @torch.jit.export
@@ -83,7 +75,7 @@ class ShiftFakeQuantize(FakeQuantizeBase):
 
     @torch.jit.export
     def extra_repr(self):
-        scale = torch.exp2(torch.log2(F.softplus(self.scale)).round())
+        scale = torch.exp2(torch.log2(self.scale_act.apply(self.scale)).ceil())
         return (
             "fake_quant_enabled={}, observer_enabled={}, "
             "quant_min={}, quant_max={}, dtype={}, qscheme={}, "
