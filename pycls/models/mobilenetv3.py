@@ -32,10 +32,11 @@ class SELayer(Module):
         self.af1 = nn.ReLU(inplace=True)
         self.fc2 = nn.Conv2d(make_divisible(channel//reduction, 8), channel, 1)
         self.af2 = nn.Hardsigmoid()
+        self.se_mul = FloatFunctional()
 
     def forward(self, x):
         se = self.af2(self.fc2(self.af1(self.fc1(self.avg_pool(x)))))
-        return x * se
+        return self.se_mul.mul(se, x)
 
     @staticmethod
     def complexity(cx, channel, reduction=4):
@@ -43,6 +44,10 @@ class SELayer(Module):
         cx = conv2d_cx(cx, channel, make_divisible(channel//reduction, 8), 1)
         cx = conv2d_cx(cx, make_divisible(channel//reduction, 8), channel, 1)
         return cx
+
+    def fuse_model(self, include_relu: bool):
+        targets = [["fc1", "af1"]]
+        fuse_modules(self, targets, inplace=True)
 
 
 class StemImageNet(Module):
@@ -65,7 +70,7 @@ class StemImageNet(Module):
         return cx
 
     def fuse_model(self, include_relu: bool):
-        targets = [["conv", "bn", "af"]] if include_relu else [["conv", "bn"]]
+        targets = [["conv", "bn"]]
         fuse_modules(self, targets, inplace=True)
 
 
@@ -81,16 +86,17 @@ class MBConv(Module):
         self.se = se
         self.exp_s = exp_s
         self.ks = ks
+        self.nl = nl
         # expand
         if exp_s != w_in:  # skip if exp_r is 1
             self.exp = conv2d(w_in, exp_s, 1)
             self.exp_bn = norm2d(exp_s)
-            self.exp_af = nn.Hardswish() if nl == 1 else nn.ReLU()
+            self.exp_af = nn.Hardswish() if self.nl == 1 else nn.ReLU()
         # depthwise
         self.dwise = conv2d(exp_s, exp_s, k=ks,
                             stride=stride, groups=exp_s)
         self.dwise_bn = norm2d(exp_s)
-        self.dwise_af = nn.Hardswish() if nl == 1 else nn.ReLU()
+        self.dwise_af = nn.Hardswish() if self.nl == 1 else nn.ReLU()
         # squeeze-and-excite
         if self.se == 1:
             self.selayer = SELayer(exp_s)
@@ -132,13 +138,15 @@ class MBConv(Module):
     def fuse_model(self, include_relu: bool):
         targets = (
             [["dwise", "dwise_bn", "dwise_af"], ["lin_proj", "lin_proj_bn"]]
-            if include_relu
+            if self.nl != 1
             else [["dwise", "dwise_bn"], ["lin_proj", "lin_proj_bn"]]
         )
         if self.exp:
             targets.append(
-                ["exp", "exp_bn", "exp_af"] if include_relu else ["exp", "exp_bn"]
+                ["exp", "exp_bn", "exp_af"] if self.nl != 1 else ["exp", "exp_bn"]
             )
+        if self.se == 1:
+            self.selayer.fuse_model(include_relu)
         fuse_modules(self, targets, inplace=True)
 
 
@@ -205,10 +213,7 @@ class MNV3Head(Module):
         return cx
 
     def fuse_model(self, include_relu: bool):
-        targets = (
-            [["conv", "conv_bn", "conv_af"]] if include_relu else [
-                ["conv", "conv_bn"]]
-        )
+        targets = [["conv", "conv_bn"]]
         fuse_modules(self, targets, inplace=True)
 
 
