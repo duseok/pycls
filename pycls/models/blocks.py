@@ -59,8 +59,6 @@ def linear(w_in, w_out, *, bias=False):
 def activation():
     """Helper for building an activation layer."""
     activation_fun = cfg.MODEL.ACTIVATION_FUN.lower()
-    # if nl == 1:
-    #     return nn.Hardswish(inplace=cfg.MODEL.ACTIVATION_INPLACE)
     if activation_fun == "relu":
         return nn.ReLU(inplace=cfg.MODEL.ACTIVATION_INPLACE)
     elif activation_fun == "relu6":
