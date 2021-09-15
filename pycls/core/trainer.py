@@ -46,7 +46,8 @@ def teacher_student_loss(teacher, inputs, preds):
 
     with torch.no_grad():
         preds_t = teacher(inputs)
-    loss = get_kd_loss(preds, preds_t)
+        preds_t_scaled = temperature_scale(preds_t, cfg.TRAIN.TEMPERATURE)
+    loss = get_kd_loss(preds, preds_t_scaled)
     return loss
 
 
@@ -61,6 +62,10 @@ def quant_loss(model: torch.nn.Module):
         if isinstance(m, ShiftFakeQuantize) and m.quant_loss is not None:
             loss += m.quant_loss
     return loss
+
+
+def temperature_scale(preds, temperature):
+    return preds if temperature == 1.0 else torch.div(preds, temperature)
 
 
 def train_epoch(
@@ -95,14 +100,10 @@ def train_epoch(
         # Perform the forward pass and compute the loss
         with amp.autocast(enabled=cfg.TRAIN.MIXED_PRECISION):
             preds = model(inputs)
-            preds_scaled = (
-                preds
-                if cfg.TRAIN.TEMPERATURE == 1.0
-                else torch.div(preds, cfg.TRAIN.TEMPERATURE)
-            )
+            preds_scaled = temperature_scale(preds, cfg.TRAIN.TEMPERATURE)
             loss = (
-                loss_fun(preds_scaled, labels_one_hot)
-                + teacher_student_loss(teacher, inputs, preds)
+                loss_fun(preds if teacher else preds_scaled, labels_one_hot)
+                + teacher_student_loss(teacher, inputs, preds_scaled)
                 + (quant_loss(model) * cfg.QUANTIZATION.QAT.QUANTIZATION_LOSS_ALPHA)
             )
         # Perform the backward pass and update the parameters
