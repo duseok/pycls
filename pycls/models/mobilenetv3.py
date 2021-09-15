@@ -6,7 +6,6 @@ from pycls.models.blocks import (
     activation,
     conv2d,
     conv2d_cx,
-    gap1d,
     gap2d,
     gap2d_cx,
     init_weights,

@@ -51,11 +51,6 @@ def gap2d(_w_in):
     return nn.AdaptiveAvgPool2d((1, 1))
 
 
-def gap1d(_w_in):
-    """Helper for building a gap1d layer."""
-    return nn.AdaptiveAvgPool2d(1)
-
-
 def linear(w_in, w_out, *, bias=False):
     """Helper for building a linear layer."""
     return nn.Linear(w_in, w_out, bias=bias)
