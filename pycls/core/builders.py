@@ -7,6 +7,7 @@
 
 """Model and loss construction functions."""
 
+from pycls.models.mobilenet import MobileNet
 from pycls.core.config import cfg
 from pycls.core.net import SoftCrossEntropyLoss
 from pycls.models.anynet import AnyNet
@@ -15,10 +16,11 @@ from pycls.models.regnet import RegNet
 from pycls.models.resnet import ResNet
 from pycls.models.mobilenetv2 import MobileNetV2
 from pycls.models.mobilenetv3 import MobileNetV3
+from pycls.models.mobilenet import MobileNet
 
 
 # Supported models
-_models = {"anynet": AnyNet, "effnet": EffNet, "resnet": ResNet, "regnet": RegNet, "mobilenetv2": MobileNetV2, "mobilenetv3": MobileNetV3}
+_models = {"anynet": AnyNet, "effnet": EffNet, "resnet": ResNet, "regnet": RegNet, "mobilenetv2": MobileNetV2, "mobilenetv3": MobileNetV3, "mobilenet": MobileNet}
 
 # Supported loss functions
 _loss_funs = {"cross_entropy": SoftCrossEntropyLoss}

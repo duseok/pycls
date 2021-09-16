@@ -1,10 +1,10 @@
 MODEL:
-  TYPE: mobilenetv3
+  TYPE: mobilenet
   NUM_CLASSES: 1000
   ACTIVATION_FUN: relu
-MNV:
+MN:
   STEM_W: 16
-  DEPTHS: [1, 1, 1, 1, 2, 1, 1, 2, 1, 1, 1, 1, 2]
+  DEPTHS: [1, 1, 1, 1, 2, 1, 1, 2, 1, 1, 1, 2]
   WIDTHS: [16, 24, 24, 40, 40, 80, 80, 80, 112, 112, 160, 160] 
   EXP_SIZES: [16, 64, 72, 72, 120, 240, 200, 184, 480, 672, 672, 960]
   STRIDES: [1, 2, 1, 2, 1, 2, 1, 1, 1, 1, 2, 1]

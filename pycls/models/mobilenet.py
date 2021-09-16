@@ -51,7 +51,7 @@ class SELayer(Module):
 
 
 class StemImageNet(Module):
-    """MobileNetV2 stem for ImageNet: 3x3, BN, AF(RELU6)."""
+    """MobileNet stem for ImageNet: 3x3, BN, AF(RELU6)."""
 
     def __init__(self, w_in, w_out, nl):
         super(StemImageNet, self).__init__()
@@ -78,16 +78,15 @@ class StemImageNet(Module):
 
 
 class MBConv(Module):
-    """MobileNetV2 inverted bottleneck block"""
+    """MobileNet inverted bottleneck block"""
 
-    def __init__(self, w_in, exp_s, stride, w_out, nl, se, ks):
+    def __init__(self, w_in, exp_s, stride, w_out, ks, nl, se):
         # Expansion, 3x3 depthwise, BN, AF, 1x1 pointwise, BN, skip_connection
         super(MBConv, self).__init__()
         self.stride = stride
         assert stride in [1, 2]  # stride must be 1 or 2
         self.exp = None
         self.se = se
-        self.ks = ks
         self.nl = nl
         # expand channel
         if exp_s != w_in: 
@@ -97,7 +96,7 @@ class MBConv(Module):
         # depthwise
         self.dwise = conv2d(exp_s, exp_s, k=ks, stride=stride, groups=exp_s)
         self.dwise_bn = norm2d(exp_s)
-        self.dwise_af = Hardswish() if nl else activation()
+        self.dwise_af = Hardswish() if self.nl else activation()
         # squeeze-and-excite
         if self.se:
             self.selayer = SELayer(exp_s)
@@ -120,7 +119,7 @@ class MBConv(Module):
         return f_x
 
     @staticmethod
-    def complexity(cx, w_in, exp_s, stride, w_out, se, ks):
+    def complexity(cx, w_in, exp_s, stride, w_out, ks, se):
         if exp_s != w_in:
             cx = conv2d_cx(cx, w_in, exp_s, 1)
             cx = norm2d_cx(cx, exp_s)
@@ -152,12 +151,12 @@ class MBConv(Module):
 class MNStage(Module):
     """MobileNet stage."""
 
-    def __init__(self, w_in, exp_s, stride, w_out, d, nl, se, ks):
+    def __init__(self, w_in, exp_s, stride, w_out, d, ks, nl, se):
         super(MNStage, self).__init__()
 
         for i in range(d):  # d는 layer의 반복 횟수
             stride = stride if i == 0 else 1
-            block = MBConv(w_in, exp_s, stride, w_out, nl, se, ks)
+            block = MBConv(w_in, exp_s, stride, w_out, ks, nl, se)
             self.add_module("b{}".format(i + 1), block)
             stride, w_in = 1, w_out
 
@@ -181,40 +180,40 @@ class MNStage(Module):
 
 
 class MNHead(Module):
-    """MobileNetV2 head: 1x1, BN, AF(ReLU6), AvgPool, Dropout, FC."""
-    """MobileNetV3 head: 1x1, BN, AF(ReLU6), AvgPool, FC, Dropout, FC."""
+    """MobileNet head: 1x1, BN, AF(ReLU6), AvgPool, (mobilenetV3-additional FC), Dropout, FC."""
 
-    def __init__(self, w_in, w_out, num_classes, hw, nl):
+    def __init__(self, w_in, w_out, num_classes, exp_s, nl):
         super(MNHead, self).__init__()
         dropout_ratio = cfg.MN.DROPOUT_RATIO
-        self.conv = conv2d(w_in, w_out, 1)
-        self.conv_bn = norm2d(w_out)
+        self.nl = nl
+        self.conv = conv2d(w_in, exp_s, 1)
+        self.conv_bn = norm2d(exp_s)
         self.conv_af = Hardswish() if nl else activation()
-        self.avg_pool = gap2d(w_out)
+        self.avg_pool = gap2d(exp_s)
         # classifier
-        if self.add_fc:
-            self.fc1 = linear(w_out, hw, bias=True)
+        if self.nl:
+            self.fc1 = linear(exp_s, w_out, bias=True)
             self.cf_af = Hardswish()
         self.dropout = Dropout(p=dropout_ratio) if dropout_ratio > 0 else None
-        self.fc = linear(hw, num_classes, bias=True)
+        self.fc = linear(w_out, num_classes, bias=True)
 
     def forward(self, x):
         x = self.conv_af(self.conv_bn(self.conv(x)))
         x = self.avg_pool(x)
         x = x.view(x.size(0), -1)
-        if self.add_fc:
+        if self.nl:
             self.cf_af(self.fc1(x))
         x = self.dropout(x) if self.dropout else x
         x = self.fc(x)
         return x
 
     @staticmethod
-    def complexity(cx, w_in, w_out, num_classes, add_fc):
+    def complexity(cx, w_in, w_out, num_classes, exp_s, nl):
         cx = conv2d_cx(cx, w_in, w_out, 1)
         cx = norm2d_cx(cx, w_out)
         cx = gap2d_cx(cx, w_out)
-        if add_fc:
-            cx = linear_cx(cx, w_out, w_out, bias=True)
+        if nl:
+            cx = linear_cx(cx, exp_s, w_out, bias=True)
         cx = linear_cx(cx, w_out, num_classes, bias=True)
         return cx
 
@@ -256,7 +255,7 @@ class MobileNet(Module):
             stage = MNStage(prev_w, exp_s, stride, w, d, ks, nl, se)
             self.add_module("s{}".format(i + 1), stage)
             prev_w = w
-        self.head = MNHead(prev_w, hw, nc, nl )
+        self.head = MNHead(prev_w, hw, nc, exp_s, nl)
         self.apply(init_weights)
 
     def forward(self, x):
@@ -276,7 +275,7 @@ class MobileNet(Module):
         for d, w, exp_s, stride, ks, nl, se in stage_params:
             cx = MNStage.complexity(cx, prev_w, exp_s, stride, w, d, ks, se)
             prev_w = w
-        cx = MNHead.complexity(cx, prev_w, hw, nc, exp_s)
+        cx = MNHead.complexity(cx, prev_w, hw, nc, exp_s, nl)
         return cx
 
     def fuse_model(self, include_relu: bool = False):
