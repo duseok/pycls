@@ -1,0 +1,31 @@
+MODEL:
+  TYPE: mobilenetv3
+  NUM_CLASSES: 1000
+  ACTIVATION_FUN: relu
+MNV:
+  STEM_W: 16
+  DEPTHS: [1, 1, 1, 1, 2, 1, 1, 2, 1, 1, 1, 1, 2]
+  WIDTHS: [16, 24, 24, 40, 40, 80, 80, 80, 112, 112, 160, 160] 
+  EXP_SIZES: [16, 64, 72, 72, 120, 240, 200, 184, 480, 672, 672, 960]
+  STRIDES: [1, 2, 1, 2, 1, 2, 1, 1, 1, 1, 2, 1]
+  KERNELS: [3, 3, 3, 5, 5, 3, 3, 3, 3, 3, 5, 5]
+  NONLINEARITY: [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]
+  SQUEEZE_AND_EXCITE: [0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1]
+  HEAD_W: 1280
+OPTIM:
+  LR_POLICY: cos
+  BASE_LR: 0.2
+  MAX_EPOCH: 150
+  MOMENTUM: 0.9
+  WEIGHT_DECAY: 1e-6
+  # WARMUP_EPOCHS: 5
+TRAIN:
+  DATASET: imagenet
+  IM_SIZE: 224
+  BATCH_SIZE: 256
+TEST:
+  DATASET: imagenet
+  IM_SIZE: 256
+  BATCH_SIZE: 200
+NUM_GPUS: 2
+OUT_DIR: .
