@@ -1,14 +1,16 @@
 MODEL:
-  TYPE: mobilenetv2
+  TYPE: mobilenet
   NUM_CLASSES: 1000
   ACTIVATION_FUN: relu6
-MNV2:
+MN:
   STEM_W: 32
-  STRIDES: [1, 2, 2, 2, 1, 2, 1] # s
-  DEPTHS: [1, 2, 3, 4, 3, 3, 1] # n
-  WIDTHS: [16, 24, 32, 64, 96, 160, 320] # c
-  EXP_RATIOS: [1, 6, 6, 6, 6, 6, 6] # t
-  # KERNELS
+  DEPTHS: [1, 1, 1, 1, 2, 1, 3, 1, 2, 1, 2, 1] # n
+  WIDTHS: [16, 24, 24, 32, 32, 64, 64, 96, 96, 160, 160, 320] # c
+  EXP_SIZES: [32, 96, 144, 144, 192, 192, 384, 384, 576, 576, 960, 960] # t
+  STRIDES: [1, 2, 1, 2, 1, 2, 1, 1, 1, 2, 1, 1] # s
+  KERNELS: [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]
+  NONLINEARITY: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  SQUEEZE_AND_EXCITE: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   HEAD_W: 1280
 OPTIM:
   LR_POLICY: cos

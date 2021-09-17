@@ -12,7 +12,6 @@ MN:
   NONLINEARITY: [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]
   SQUEEZE_AND_EXCITE: [0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1]
   HEAD_W: 1280
-  POINTWISE_LINEAR: 1
 OPTIM:
   LR_POLICY: cos
   BASE_LR: 0.2
