@@ -188,8 +188,7 @@ def init_weights(m):
         m.weight.data.normal_(mean=0.0, std=np.sqrt(2.0 / fan_out))
     elif isinstance(m, nn.BatchNorm2d):
         zero_init_gamma = cfg.BN.ZERO_INIT_FINAL_GAMMA
-        zero_init_gamma = hasattr(
-            m, "final_bn") and m.final_bn and zero_init_gamma
+        zero_init_gamma = hasattr(m, "final_bn") and m.final_bn and zero_init_gamma
         m.weight.data.fill_(0.0 if zero_init_gamma else 1.0)
         m.bias.data.zero_()
     elif isinstance(m, nn.Linear):

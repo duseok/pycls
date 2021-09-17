@@ -86,8 +86,7 @@ class AnyHead(Module):
 
     def fuse_model(self, include_relu: bool):
         if self.head_width > 0:
-            targets = [["conv", "bn", "af"]
-                       ] if include_relu else [["conv", "bn"]]
+            targets = [["conv", "bn", "af"]] if include_relu else [["conv", "bn"]]
             fuse_modules(self, targets, inplace=True)
 
 
