@@ -2,7 +2,7 @@ MODEL:
   TYPE: mobilenet
   NUM_CLASSES: 1000
   ACTIVATION_FUN: relu6
-MNV2:
+MN:
   STEM_W: 32
   DEPTHS: [1, 1, 1, 1, 2, 1, 3, 1, 2, 1, 2, 1] # n
   WIDTHS: [16, 24, 24, 32, 32, 64, 64, 96, 96, 160, 160, 320] # c
@@ -12,6 +12,7 @@ MNV2:
   NONLINEARITY: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   SQUEEZE_AND_EXCITE: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   HEAD_W: 1280
+  POINTWISE_LINEAR: 1
 OPTIM:
   LR_POLICY: cos
   BASE_LR: 0.2 #

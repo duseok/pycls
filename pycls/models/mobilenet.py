@@ -51,7 +51,7 @@ class SELayer(Module):
 
 
 class StemImageNet(Module):
-    """MobileNet stem for ImageNet: 3x3, BN, AF(RELU6)."""
+    """MobileNet stem for ImageNet: 3x3, BN, AF."""
 
     def __init__(self, w_in, w_out, nl):
         super(StemImageNet, self).__init__()
@@ -72,8 +72,7 @@ class StemImageNet(Module):
         return cx
 
     def fuse_model(self, include_relu: bool):
-        targets = [["conv", "bn", "af"]
-                   ] if include_relu and self.nl else [["conv", "bn"]]
+        targets = [["conv", "bn", "af"]] if include_relu and not(self.nl) else [["conv", "bn"]]
         fuse_modules(self, targets, inplace=True)
 
 
@@ -136,12 +135,12 @@ class MBConv(Module):
     def fuse_model(self, include_relu: bool):
         targets = (
             [["dwise", "dwise_bn", "dwise_af"], ["lin_proj", "lin_proj_bn"]]
-            if (include_relu and self.nl != 1)
+            if (include_relu and not(self.nl))
             else [["dwise", "dwise_bn"], ["lin_proj", "lin_proj_bn"]]
         )
         if self.exp:
             targets.append(
-                ["exp", "exp_bn", "exp_af"] if (include_relu and self.nl != 1) else ["exp", "exp_bn"]
+                ["exp", "exp_bn", "exp_af"] if (include_relu and not(self.nl)) else ["exp", "exp_bn"]
             )
         if self.se:
             self.selayer.fuse_model(include_relu)
@@ -171,7 +170,7 @@ class MNStage(Module):
             stride = stride if i == 0 else 1
             cx = MBConv.complexity(cx, w_in, exp_s, stride, w_out, ks, se)
             stride, w_in = 1, w_out
-            return cx
+        return cx
 
     def fuse_model(self, include_relu: bool):
         for m in self.modules():
@@ -186,6 +185,7 @@ class MNHead(Module):
         super(MNHead, self).__init__()
         dropout_ratio = cfg.MN.DROPOUT_RATIO
         self.nl = nl
+        exp_s = w_out if nl == 0 else exp_s
         self.conv = conv2d(w_in, exp_s, 1)
         self.conv_bn = norm2d(exp_s)
         self.conv_af = Hardswish() if nl else activation()
@@ -209,9 +209,10 @@ class MNHead(Module):
 
     @staticmethod
     def complexity(cx, w_in, w_out, num_classes, exp_s, nl):
-        cx = conv2d_cx(cx, w_in, w_out, 1)
-        cx = norm2d_cx(cx, w_out)
-        cx = gap2d_cx(cx, w_out)
+        exp_s = w_out if nl == 0 else exp_s
+        cx = conv2d_cx(cx, w_in, exp_s, 1)
+        cx = norm2d_cx(cx, exp_s)
+        cx = gap2d_cx(cx, exp_s)
         if nl:
             cx = linear_cx(cx, exp_s, w_out, bias=True)
         cx = linear_cx(cx, w_out, num_classes, bias=True)
@@ -249,7 +250,7 @@ class MobileNet(Module):
         vs = ["sw", "ds", "ws", "exp_sz", "ss", "ks", "nl", "se", "hw", "nc"]
         sw, ds, ws, exp_sz, ss, ks, nl, se, hw, nc = [p[v] for v in vs]
         stage_params = list(zip(ds, ws, exp_sz, ss, ks, nl, se))
-        self.stem = StemImageNet(3, sw, nl) #첫 stem 표시????
+        self.stem = StemImageNet(3, sw, nl)
         prev_w = sw
         for i, (d, w, exp_s, stride, ks, nl, se) in enumerate(stage_params):
             stage = MNStage(prev_w, exp_s, stride, w, d, ks, nl, se)
