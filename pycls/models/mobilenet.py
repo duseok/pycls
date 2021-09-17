@@ -166,10 +166,10 @@ class MNStage(Module):
         return x
 
     @staticmethod
-    def complexity(cx, w_in, exp_s, stride, w_out, d, se, ks):
+    def complexity(cx, w_in, exp_s, stride, w_out, d, ks, se):
         for i in range(d):
             stride = stride if i == 0 else 1
-            cx = MBConv.complexity(cx, w_in, exp_s, stride, w_out, se, ks)
+            cx = MBConv.complexity(cx, w_in, exp_s, stride, w_out, ks, se)
             stride, w_in = 1, w_out
             return cx
 
