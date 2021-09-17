@@ -253,34 +253,6 @@ _C.MN.HEAD_W = 1280
 _C.MN.DROPOUT_RATIO = 0.2
 
 
-# ------------------------------- MobileNetV2 options ------------------------------- #
-_C.MNV2 = CfgNode()
-
-# Stem width
-_C.MNV2.STEM_W = 32
-
-# Depth for each stage (number of blocks in the stage)
-_C.MNV2.DEPTHS = []
-
-# Width for each stage (width of each block in the stage)
-_C.MNV2.WIDTHS = []
-
-# Expansion ratios for MBConv blocks in each stage
-_C.MNV2.EXP_RATIOS = []
-
-# Strides for each stage (applies to the first block of each stage)
-_C.MNV2.STRIDES = []
-
-# Kernel sizes for each stage
-_C.MNV2.KERNELS = []
-
-# Head width
-_C.MNV2.HEAD_W = 1280
-
-# Dropout ratio
-_C.MNV2.DROPOUT_RATIO = 0.2
-
-
 # ------------------------------- EfficientNet options ------------------------------- #
 _C.EN = CfgNode()
 
