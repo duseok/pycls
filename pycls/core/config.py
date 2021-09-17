@@ -219,32 +219,38 @@ _C.REGNET.BOT_MUL = 1.0
 _C.REGNET.HEAD_W = 0
 
 
-# ------------------------------- MobileNetV2 options ------------------------------- #
-_C.MNV2 = CfgNode()
+# ------------------------------- MobileNet options ------------------------------- #
+_C.MN = CfgNode()
 
 # Stem width
-_C.MNV2.STEM_W = 32
+_C.MN.STEM_W = 32
 
 # Depth for each stage (number of blocks in the stage)
-_C.MNV2.DEPTHS = []
+_C.MN.DEPTHS = []
 
 # Width for each stage (width of each block in the stage)
-_C.MNV2.WIDTHS = []
+_C.MN.WIDTHS = []
 
-# Expansion ratios for MBConv blocks in each stage
-_C.MNV2.EXP_RATIOS = []
+# Expansion sizes for MBConv blocks in each stage
+_C.MN.EXP_SIZES = []
 
 # Strides for each stage (applies to the first block of each stage)
-_C.MNV2.STRIDES = []
+_C.MN.STRIDES = []
 
 # Kernel sizes for each stage
-_C.MNV2.KERNELS = []
+_C.MN.KERNELS = []
+
+# Type of nonlinearity used (1 means h-swish, 0 means ReLU)
+_C.MN.NONLINEARITY = []
+
+# Existence of Squeeze-And-Excite in each stage
+_C.MN.SQUEEZE_AND_EXCITE = []
 
 # Head width
-_C.MNV2.HEAD_W = 1280
+_C.MN.HEAD_W = 1280
 
 # Dropout ratio
-_C.MNV2.DROPOUT_RATIO = 0.2
+_C.MN.DROPOUT_RATIO = 0.2
 
 
 # ------------------------------- EfficientNet options ------------------------------- #
