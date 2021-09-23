@@ -271,6 +271,13 @@ class ResBottleneckBlock(Module):
             fuse_modules(self, [["proj", "bn"]], inplace=True)
         self.f.fuse_model(include_relu)
 
+    def postprocess_skip(self, prev_postprocess):
+        if self.proj:
+            prev_postprocess = self.proj.activation_post_process
+
+        self.f.c.activation_post_process = prev_postprocess
+        return self.skip_add.activation_post_process
+
 
 class ResBottleneckLinearBlock(Module):
     """Residual linear bottleneck block: x + f(x), f = bottleneck transform."""
@@ -402,6 +409,14 @@ class AnyStage(Module):
             ]:
                 m.fuse_model(include_relu)
 
+    def postprocess_skip(self, prev_postprocess):
+        for block in self.children():
+            if isinstance(block, ResBottleneckBlock):
+                prev_postprocess = block.postprocess_skip(prev_postprocess)
+            else:
+                raise NotImplementedError
+        return prev_postprocess
+
 
 class AnyNet(Module):
     """AnyNet model."""
@@ -467,9 +482,9 @@ class AnyNet(Module):
                 m.fuse_model(include_relu)
         self.head.fuse_model(include_relu)
 
+
     def postprocess_skip(self):
+        prev = self.stem.conv.activation_post_process
         for mod in self.modules():
-            if isinstance(mod, AnyStage) and len(mod._modules) > 1:
-                fakeq = mod._modules["b1"].f.c.activation_post_process
-                for _, m in list(mod._modules.items())[1:]:
-                    m.f.c.activation_post_process = fakeq
+            if isinstance(mod, AnyStage):
+                prev = mod.postprocess_skip(prev)

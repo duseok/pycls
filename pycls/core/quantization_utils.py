@@ -19,6 +19,7 @@ from pycls.quantization.shift_observer import (
     MovingAvgMinMaxShiftObserver,
 )
 from torch.nn.modules.pooling import AdaptiveAvgPool2d
+from torch.nn.quantized.modules.functional_modules import FloatFunctional
 from torch.quantization.observer import HistogramObserver, MinMaxObserver
 
 if TYPE_CHECKING:
@@ -147,7 +148,14 @@ def _copy_fake_quant(src: QuantizedModel, dest: QuantizedModel):
             d.zero_point = s.zero_point
 
 
-def quantize_network_for_qat(model: Module):
+def get_last_postprocess_before(model: Module, module: Module):
+    rev_modules = list(model.modules())
+    for mod in reversed(rev_modules[: rev_modules.index(module)]):
+        if isinstance(mod, (QConv2d, QConvBn2d, QLinear, FloatFunctional)):
+            return mod.activation_post_process
+
+
+def quantize_network_for_qat(model: QuantizedModel):
     model.train()
     model = fuse_network(model, cfg.QUANTIZATION.QAT.WITH_BN)
 
@@ -156,10 +164,9 @@ def quantize_network_for_qat(model: Module):
     ), "When testing QAT, only one quantization method is supported."
     model = _quantize_model4qat(model, cfg.QUANTIZATION.METHOD[0])
     if cfg.QUANTIZATION.QAT.TRAIN_SHIFT_AVG_POOL:
-        prev_post_process = model.model_fp32.head.conv.activation_post_process
-        model.model_fp32.head.avg_pool = QuantOps[AdaptiveAvgPool2d].from_trained_op(
-            prev_post_process
-        )
+        head = model.model_fp32.head
+        prev_post_process = get_last_postprocess_before(model.model_fp32, head.avg_pool)
+        head.avg_pool = QuantOps[AdaptiveAvgPool2d].from_trained_op(prev_post_process)
 
     model = model2cuda(model)
     ema = deepcopy(model)
