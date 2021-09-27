@@ -270,7 +270,7 @@ class MobileNet(Module):
     def complexity(cx, params=None):
         """Computes model complexity (if you alter the model, make sure to update)."""
         p = MobileNet.get_params() if not params else params
-        vs = ["sw", "ds", "ws", "exp_rs", "ss", "ks", "nl", "se", "hw", "nc"]
+        vs = ["sw", "ds", "ws", "exp_rs", "ss", "ks", "nl", "se", "lw", "hw", "nc"]
         sw, ds, ws, exp_rs, ss, ks, nl, se, lw, hw, nc = [p[v] for v in vs]
         stage_params = list(zip(ds, ws, exp_rs, ss, ks, nl, se))
         cx = StemImageNet.complexity(cx, 3, sw)

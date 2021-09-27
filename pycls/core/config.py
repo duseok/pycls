@@ -250,7 +250,7 @@ _C.MN.SQUEEZE_AND_EXCITE = []
 _C.MN.LINEAR_W = 1280
 
 # Final Head width
-_C.HEAD_W = 1280
+_C.MN.HEAD_W = 1280
 
 # Dropout ratio
 _C.MN.DROPOUT_RATIO = 0.2
