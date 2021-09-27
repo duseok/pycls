@@ -231,8 +231,8 @@ _C.MN.DEPTHS = []
 # Width for each stage (width of each block in the stage)
 _C.MN.WIDTHS = []
 
-# Expansion sizes for MBConv blocks in each stage
-_C.MN.EXP_SIZES = []
+# Expansion ratios for MBConv blocks in each stage
+_C.MN.EXP_RATIOS = []
 
 # Strides for each stage (applies to the first block of each stage)
 _C.MN.STRIDES = []
@@ -246,8 +246,11 @@ _C.MN.NONLINEARITY = []
 # Existence of Squeeze-And-Excite in each stage
 _C.MN.SQUEEZE_AND_EXCITE = []
 
-# Head width
-_C.MN.HEAD_W = 1280
+# First Linear In-features Width in Head
+_C.MN.LINEAR_W = 1280
+
+# Final Head width
+_C.HEAD_W = 1280
 
 # Dropout ratio
 _C.MN.DROPOUT_RATIO = 0.2
