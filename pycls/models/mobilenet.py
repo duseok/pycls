@@ -204,7 +204,7 @@ class MNHead(Module):
         x = self.avg_pool(x)
         x = x.view(x.size(0), -1)
         if self.lw != self.w_out:
-            self.cf_af(self.fc1(x))
+            x = self.cf_af(self.fc1(x))
         x = self.dropout(x) if self.dropout else x
         x = self.fc(x)
         return x
